@@ -1,0 +1,9 @@
+node_modules
+.next
+.env
+*.db
+*.db-journal
+/uploads
+# WhatsApp Hub linked-device credentials
+/.wa-hub
+next-env.d.ts

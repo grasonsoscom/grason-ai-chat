@@ -1,0 +1,272 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Single-tenant account settings (coins, integrations).
+model Account {
+  id              Int      @id @default(1)
+  name            String
+  coins           Int      @default(0)
+  timezone        String   @default("Asia/Jakarta")
+  webhookUrl      String?
+  webhookEnabled  Boolean  @default(false)
+  scalevApiKey    String?
+  scalevEnabled   Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+}
+
+model CoinTransaction {
+  id        Int      @id @default(autoincrement())
+  amount    Int
+  reason    String
+  createdAt DateTime @default(now())
+}
+
+model Role {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique
+  description String  @default("")
+  permissions String  @default("") // comma separated module keys
+  users       User[]
+}
+
+model Group {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  users User[]
+}
+
+model User {
+  id           Int             @id @default(autoincrement())
+  name         String
+  email        String          @unique
+  phone        String          @default("")
+  passwordHash String
+  status       String          @default("active")
+  roleId       Int
+  role         Role            @relation(fields: [roleId], references: [id])
+  groupId      Int?
+  group        Group?          @relation(fields: [groupId], references: [id])
+  devices      Device[]
+  conversations Conversation[]
+  broadcasts   Broadcast[]
+  events       CalendarEvent[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}
+
+model Device {
+  id            Int               @id @default(autoincrement())
+  label         String
+  phone         String
+  apiType       String            @default("Cloud API")
+  coex          Boolean           @default(false)
+  status        String            @default("connected")
+  connectedAt   DateTime          @default(now())
+  // WhatsApp Hub only: folder name of the linked-device session under WA_HUB_DIR.
+  hubSessionKey String?
+  // Cloud API only: Meta "Phone number ID" used for sending and to route webhooks.
+  phoneNumberId String?           @unique
+  staff         User[]
+  agents        AiAgent[]
+  templates     MessageTemplate[]
+  events        DeviceEvent[]
+  conversations Conversation[]
+  broadcasts    Broadcast[]
+  createdAt     DateTime          @default(now())
+}
+
+model DeviceEvent {
+  id        Int      @id @default(autoincrement())
+  deviceId  Int
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  message   String
+  createdAt DateTime @default(now())
+}
+
+model MessageTemplate {
+  id        Int      @id @default(autoincrement())
+  deviceId  Int
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  name      String
+  category  String   @default("UTILITY")
+  body      String
+  createdAt DateTime @default(now())
+}
+
+model Customer {
+  id            Int              @id @default(autoincrement())
+  name          String
+  phone         String           @unique
+  email         String           @default("")
+  notes         String           @default("")
+  stageId       Int?
+  stage         FunnelStage?     @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  labels        Label[]
+  conversation  Conversation?
+  audiences     Audience[]
+  events        CalendarEvent[]
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+}
+
+model Conversation {
+  id              Int       @id @default(autoincrement())
+  customerId      Int       @unique
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  deviceId        Int?
+  device          Device?   @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  assignedToId    Int?
+  assignedTo      User?     @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  // "ai" = handled by AI agent, "staf" = handled by staff, "eskalasi" = escalated
+  mode            String    @default("ai")
+  unread          Int       @default(0)
+  lastMessageAt   DateTime  @default(now())
+  lastInboundAt   DateTime?
+  lastFollowupAt  DateTime?
+  messages        Message[]
+}
+
+model Message {
+  id             Int          @id @default(autoincrement())
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction      String       // "in" | "out"
+  sender         String       // "customer" | "ai" | "staff" | "system"
+  text           String
+  status         String       @default("sent") // sent | delivered | read | failed | simulated
+  // WhatsApp message id (wamid). Matches delivery receipts and dedupes webhook retries.
+  externalId     String?      @unique
+  createdAt      DateTime     @default(now())
+}
+
+model Product {
+  id          Int              @id @default(autoincrement())
+  name        String
+  description String           @default("")
+  aiPrompt    String           @default("")
+  variants    ProductVariant[]
+  images      ProductImage[]
+  agents      AiAgent[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model ProductVariant {
+  id        Int     @id @default(autoincrement())
+  productId Int
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String
+  price     Int     @default(0)
+  sku       String  @default("")
+}
+
+model ProductImage {
+  id        Int     @id @default(autoincrement())
+  productId Int
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  fileName  String
+  mimeType  String
+  size      Int
+}
+
+model Funnel {
+  id      Int           @id @default(autoincrement())
+  name    String
+  levels  FunnelLevel[]
+  agents  AiAgent[]
+}
+
+model FunnelLevel {
+  id       Int           @id @default(autoincrement())
+  funnelId Int
+  funnel   Funnel        @relation(fields: [funnelId], references: [id], onDelete: Cascade)
+  order    Int
+  stages   FunnelStage[]
+}
+
+model FunnelStage {
+  id          Int         @id @default(autoincrement())
+  levelId     Int
+  level       FunnelLevel @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  name        String
+  description String      @default("")
+  order       Int
+  // Sequential number across the whole funnel, recalculated on every change.
+  number      Int         @default(0)
+  aiEnabled   Boolean     @default(true)
+  customers   Customer[]
+}
+
+model Label {
+  id        Int        @id @default(autoincrement())
+  name      String     @unique
+  color     String     @default("#22c55e")
+  customers Customer[]
+}
+
+model Audience {
+  id        Int        @id @default(autoincrement())
+  name      String
+  type      String     @default("Manual") // Manual | Impor
+  customers Customer[]
+  broadcasts Broadcast[]
+  createdAt DateTime   @default(now())
+}
+
+model Broadcast {
+  id          Int       @id @default(autoincrement())
+  name        String
+  type        String    // "Single" | "Series"
+  status      String    @default("Draft") // Draft | Terkirim | Gagal
+  message     String
+  deviceId    Int?
+  device      Device?   @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  audienceId  Int?
+  audience    Audience? @relation(fields: [audienceId], references: [id], onDelete: SetNull)
+  createdById Int?
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  sentCount   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model AiAgent {
+  id                 Int       @id @default(autoincrement())
+  name               String
+  description        String    @default("")
+  baseLearning       String    @default("Customer Service")
+  personality        String    @default("")
+  active             Boolean   @default(true)
+  maxReplyChars      Int       @default(600)
+  escalationEnabled  Boolean   @default(false)
+  escalationKeywords String    @default("") // comma separated
+  escalationMessage  String    @default("")
+  followupEnabled    Boolean   @default(false)
+  followupDelayHours Int       @default(24)
+  followupMessage    String    @default("")
+  webhookOnReply     Boolean   @default(false)
+  funnelId           Int?
+  funnel             Funnel?   @relation(fields: [funnelId], references: [id], onDelete: SetNull)
+  products           Product[]
+  devices            Device[]
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+model CalendarEvent {
+  id         Int       @id @default(autoincrement())
+  title      String
+  date       DateTime
+  notes      String    @default("")
+  staffId    Int?
+  staff      User?     @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  customerId Int?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdAt  DateTime  @default(now())
+}
