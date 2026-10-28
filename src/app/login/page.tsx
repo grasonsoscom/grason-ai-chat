@@ -1,6 +1,7 @@
 import { ActionForm, SubmitButton } from "@/components/forms";
 import { Field } from "@/components/ui";
 import { login } from "./actions";
+import { hubSupported } from "@/lib/runtime";
 import { WaQrLogin } from "./wa-qr";
 
 export default function LoginPage() {
@@ -10,12 +11,16 @@ export default function LoginPage() {
         <div className="mb-6 text-center">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-green-600 text-xl font-bold text-white">G</div>
           <h1 className="text-xl font-semibold">Masuk ke GrasOn AI Chat</h1>
-          <p className="mt-1 text-sm text-slate-500">Scan kode QR dengan WhatsApp, atau masuk dengan email</p>
+          <p className="mt-1 text-sm text-slate-500">{hubSupported ? "Scan kode QR dengan WhatsApp, atau masuk dengan email" : "Masuk dengan email dan kata sandi"}</p>
         </div>
-        <WaQrLogin />
-        <div className="my-6 flex items-center gap-3 text-xs text-slate-400">
-          <div className="h-px flex-1 bg-slate-200" />atau masuk dengan email<div className="h-px flex-1 bg-slate-200" />
-        </div>
+        {hubSupported && (
+          <>
+            <WaQrLogin />
+            <div className="my-6 flex items-center gap-3 text-xs text-slate-400">
+              <div className="h-px flex-1 bg-slate-200" />atau masuk dengan email<div className="h-px flex-1 bg-slate-200" />
+            </div>
+          </>
+        )}
         <ActionForm action={login}>
           <Field label="Email">
             <input name="email" type="email" required autoComplete="email" className="input" />

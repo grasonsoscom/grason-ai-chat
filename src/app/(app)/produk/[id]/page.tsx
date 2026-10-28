@@ -5,6 +5,7 @@ import { ImageInput } from "@/components/image-input";
 import { Card, Field, Table, Tabs } from "@/components/ui";
 import { db } from "@/lib/db";
 import { formatIDR } from "@/lib/format";
+import { imageUrl } from "@/lib/uploads";
 import { addVariant, deleteImage, deleteVariant, saveGeneral, savePrompt } from "../actions";
 
 export default async function EditProductPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string }> }) {
@@ -42,7 +43,7 @@ export default async function EditProductPage({ params, searchParams }: { params
               {p.images.map((img) => (
                 <div key={img.id} className="relative overflow-hidden rounded-lg border border-slate-200">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={`/api/uploads/${img.fileName}`} alt="" className="aspect-square w-full object-cover" />
+                  <img src={imageUrl(img.fileName)} alt="" className="aspect-square w-full object-cover" />
                   <div className="absolute right-1 top-1 rounded bg-white/90">
                     <ActionButton action={deleteImage} fields={{ id: img.id }} confirm="Hapus gambar ini?" className="px-1.5 text-sm">🗑️</ActionButton>
                   </div>

@@ -5,6 +5,7 @@ import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { required, run, str, type ActionState } from "@/lib/action";
 import { cancelPairing, disconnectHubDevice, getPairing, startPairing } from "@/lib/wa-hub";
+import { HUB_UNAVAILABLE, hubSupported } from "@/lib/runtime";
 import { HUB_API_TYPE } from "@/lib/whatsapp";
 
 const done = (msg: string) => { revalidatePath("/whatsapp"); return msg; };
@@ -98,6 +99,7 @@ export async function deleteDevice(_: ActionState, fd: FormData) {
 
 export async function startHubPairing(label: string) {
   await requireAdmin();
+  if (!hubSupported) return { error: HUB_UNAVAILABLE };
   const name = label.trim();
   if (!name) return { error: "Nama perangkat wajib diisi." };
   return { key: await startPairing(name) };

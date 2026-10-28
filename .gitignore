@@ -7,3 +7,6 @@ node_modules
 # WhatsApp Hub linked-device credentials
 /.wa-hub
 next-env.d.ts
+
+# Generated for Vercel by scripts/pg-schema.mjs
+/prisma/postgres.prisma

@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { SESSION_COOKIE, signSession } from "@/lib/session";
 import { WA_LOGIN_COOKIE, cancelAttempt, consumeApproved, getAttempt, startAttempt } from "@/lib/wa-login";
 import type { ActionState } from "@/lib/action";
+import { HUB_UNAVAILABLE, hubSupported } from "@/lib/runtime";
 
 async function setSession(userId: number) {
   (await cookies()).set(SESSION_COOKIE, await signSession(userId), {
@@ -31,6 +32,7 @@ export async function login(_: ActionState, fd: FormData): Promise<ActionState> 
 // showed the QR can claim the login.
 
 export async function startWaLogin() {
+  if (!hubSupported) throw new Error(HUB_UNAVAILABLE);
   const store = await cookies();
   await cancelAttempt(store.get(WA_LOGIN_COOKIE)?.value);
   const id = await startAttempt();

@@ -6,6 +6,7 @@ import { HUB_API_TYPE } from "@/lib/whatsapp";
 import { addDevice, addTemplate, assignStaff, deleteDevice, deleteTemplate, disconnectHub, saveCloudConfig, setDeviceStatus } from "./actions";
 import { CallbackUrl } from "./cloud-setup";
 import { HubPairing } from "./hub-pair";
+import { HUB_UNAVAILABLE, hubSupported } from "@/lib/runtime";
 
 function Check({ ok, label }: { ok: boolean; label: string }) {
   return <li className={ok ? "text-green-700" : "text-red-600"}>{ok ? "✓" : "✗"} {label}</li>;
@@ -70,17 +71,19 @@ export default async function WhatsAppPage({ searchParams }: { searchParams: Pro
             <SubmitButton>Tambah</SubmitButton>
           </ActionForm>
         </Modal>
-      ) : (
+      ) : hubSupported ? (
         <Modal trigger="+ Scan QR WhatsApp" title="Tautkan Nomor WhatsApp">
           <HubPairing />
         </Modal>
-      )} />
+      ) : undefined} />
       <Tabs active={tab} tabs={[
         { key: "business", label: "WhatsApp Business", href: "/whatsapp", badge: <Badge tone="green">RESMI</Badge> },
         { key: "hub", label: "WhatsApp Hub", href: "/whatsapp?tab=hub" },
       ]} />
 
-      {tab === "hub" ? (
+      {tab === "hub" && !hubSupported ? (
+        <EmptyState title="WhatsApp Hub tidak tersedia" description={HUB_UNAVAILABLE} />
+      ) : tab === "hub" ? (
         <>
           <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             WhatsApp Hub menautkan nomor lewat scan QR seperti WhatsApp Web. Ini koneksi tidak resmi: tidak ada template Meta (template dikirim sebagai teks biasa) dan nomor bisa diblokir WhatsApp jika dipakai untuk pengiriman massal.

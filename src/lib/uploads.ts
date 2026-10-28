@@ -1,6 +1,7 @@
 import { mkdir, unlink, writeFile } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
+import { del, put } from "@vercel/blob";
 
 export const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -18,12 +19,32 @@ export async function saveImage(file: File) {
   const buf = Buffer.from(await file.arrayBuffer());
   const type = sniff(buf);
   if (!type || !TYPES[type]) throw new Error(`"${file.name}" bukan JPEG atau PNG.`);
+  const name = `${randomUUID()}${TYPES[type]}`;
+  if (useBlob()) {
+    // Serverless disks are ephemeral; Vercel Blob keeps the file. fileName stores its URL.
+    const blob = await put(`products/${name}`, buf, { access: "public", contentType: type, addRandomSuffix: false });
+    return { fileName: blob.url, mimeType: type, size: file.size };
+  }
   await mkdir(UPLOAD_DIR, { recursive: true });
-  const fileName = `${randomUUID()}${TYPES[type]}`;
-  await writeFile(path.join(UPLOAD_DIR, fileName), buf);
-  return { fileName, mimeType: type, size: file.size };
+  await writeFile(path.join(UPLOAD_DIR, name), buf);
+  return { fileName: name, mimeType: type, size: file.size };
 }
 
 export async function removeImage(fileName: string) {
+  if (/^https?:\/\//.test(fileName)) {
+    if (useBlob()) await del(fileName).catch(() => {});
+    return;
+  }
   await unlink(path.join(UPLOAD_DIR, path.basename(fileName))).catch(() => {});
+}
+
+/** Image src for a stored fileName (local file name or Blob URL). */
+export function imageUrl(fileName: string) {
+  return /^https?:\/\//.test(fileName) ? fileName : `/api/uploads/${fileName}`;
+}
+
+function useBlob() {
+  if (process.env.BLOB_READ_WRITE_TOKEN) return true;
+  if (process.env.VERCEL) throw new Error("Penyimpanan gambar belum diatur. Hubungkan Vercel Blob ke project ini.");
+  return false;
 }

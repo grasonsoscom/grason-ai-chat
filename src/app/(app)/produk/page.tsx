@@ -3,6 +3,7 @@ import { ActionButton } from "@/components/forms";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { db } from "@/lib/db";
 import { formatIDR } from "@/lib/format";
+import { imageUrl } from "@/lib/uploads";
 import { createProduct, deleteProduct } from "./actions";
 
 export default async function ProdukPage() {
@@ -23,7 +24,7 @@ export default async function ProdukPage() {
                   <div className="flex h-40 items-center justify-center bg-slate-100">
                     {p.images[0]
                       // eslint-disable-next-line @next/next/no-img-element
-                      ? <img src={`/api/uploads/${p.images[0].fileName}`} alt={p.name} className="h-full w-full object-cover" />
+                      ? <img src={imageUrl(p.images[0].fileName)} alt={p.name} className="h-full w-full object-cover" />
                       : <span className="text-4xl" aria-hidden>📦</span>}
                   </div>
                   <div className="p-4">

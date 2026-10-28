@@ -8,3 +8,12 @@ export async function POST(req: Request) {
   }
   return Response.json({ sent: await runFollowups() });
 }
+
+/** Vercel Cron (vercel.json) sends GET with "Authorization: Bearer $CRON_SECRET". */
+export async function GET(req: Request) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return Response.json({ sent: await runFollowups() });
+}

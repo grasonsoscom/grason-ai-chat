@@ -5,9 +5,12 @@ import bcrypt from "bcryptjs";
 
 const db = new PrismaClient();
 
-// Local test login (change via SEED_ADMIN_PASSWORD).
+// On Vercel the app is public: no known default passwords there.
+const ON_VERCEL = Boolean(process.env.VERCEL);
+
+// Local test login (change via SEED_ADMIN_PASSWORD; required on Vercel).
 const ADMIN_EMAIL = "admin@centris.test";
-const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? "centris-dev-123";
+const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? (ON_VERCEL ? "" : "centris-dev-123");
 
 // Demo login with full (Admin) access for trying the app locally.
 const DEMO_EMAIL = "demo@centris.test";
@@ -15,6 +18,7 @@ const DEMO_PASSWORD = "demo-centris-2026";
 
 /** Creates or resets the demo account. Safe to run on an existing database. */
 async function ensureDemoUser() {
+  if (ON_VERCEL) return;
   const role = await db.role.findUnique({ where: { name: "Admin" } });
   if (!role) return;
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
@@ -44,6 +48,7 @@ async function main() {
     await ensureAdminPhone();
     return;
   }
+  if (!ADMIN_PASSWORD) throw new Error("Set SEED_ADMIN_PASSWORD in the Vercel environment variables before the first deploy.");
 
   await db.account.create({ data: { id: 1, name: "Vivagoat", coins: 89103 } });
 

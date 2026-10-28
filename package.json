@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "vercel-build": "node scripts/pg-schema.mjs && prisma generate --schema prisma/postgres.prisma && prisma db push --schema prisma/postgres.prisma --skip-generate && tsx prisma/seed.ts && next build",
     "start": "next start",
     "lint": "next lint",
     "db:push": "prisma db push",
@@ -18,6 +19,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
     "@prisma/client": "^6.19.3",
+    "@vercel/blob": "^2.8.2",
     "baileys": "^7.0.0-rc14",
     "bcryptjs": "^3.0.3",
     "exceljs": "^4.4.0",

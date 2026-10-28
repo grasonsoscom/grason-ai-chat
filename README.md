@@ -45,6 +45,18 @@ Open http://localhost:3000 and scan the QR with WhatsApp (**Perangkat tertaut â†
 - `src/lib/shipping.ts` scans the customer's latest messages for kecamatan / kab/kota names when they ask about shipping, and adds the matching rates to the AI prompt. Per destination the cheapest warehouse is used; REG and Cargo are both offered. A weight like "25 kg" gives a computed Cargo total.
 - Short kecamatan names that are everyday words ("Baru", "Kamu") only match after "kec"/"kecamatan".
 
+## Deploying to Vercel
+
+Local dev stays on SQLite; Vercel uses PostgreSQL. `npm run vercel-build` (set in `vercel.json`) writes `prisma/postgres.prisma` from `schema.prisma` with a `postgresql` datasource, runs `prisma db push` and the seed, then `next build`.
+
+- **Database**: add Neon (Storage / Marketplace) to the project; it sets `DATABASE_URL` and `DATABASE_URL_UNPOOLED`. `db push` refuses destructive changes, so a schema change that drops data fails the build instead of deleting it.
+- **Images**: connect a Vercel Blob store (`BLOB_READ_WRITE_TOKEN`). Product images are stored there as public URLs; uploads are refused on Vercel without it.
+- **Seed**: the first build creates the sample data and `admin@centris.test` with `SEED_ADMIN_PASSWORD` (required on Vercel). The demo account is not created on Vercel.
+- **WhatsApp Hub and QR login are off on Vercel** (`src/lib/runtime.ts`): they need a long-running process. Use the Cloud API; webhook URL `https://<domain>/api/webhooks/whatsapp`.
+- **Follow-ups**: Vercel Cron calls `GET /api/cron/followup` once a day (Hobby limit) with `CRON_SECRET`. For every 15 minutes, use an external scheduler with `POST` + `x-webhook-secret`.
+- **Ongkir**: upload the J&T Excel again in Integrasi after the first deploy.
+- Search in Pesan/Pelanggan is case-sensitive on PostgreSQL.
+
 ## Optional configuration (`.env`)
 
 | Variable | Purpose |
