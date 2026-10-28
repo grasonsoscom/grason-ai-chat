@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db";
+import { shippingContext } from "./shipping";
 
 const MODEL = "claude-opus-5-5";
 
@@ -31,7 +32,7 @@ export function loadAgent(agentId: number) {
  * Builds the system prompt. The agent's Deskripsi is business configuration
  * written by the owner and is passed through verbatim.
  */
-export function buildSystemPrompt(agent: AgentWithContext) {
+export function buildSystemPrompt(agent: AgentWithContext, shipping?: string | null) {
   const parts: string[] = [
     `Kamu adalah "${agent.name}", agen ${agent.baseLearning} untuk bisnis yang berjualan lewat WhatsApp.`,
     "Balas dalam Bahasa Indonesia, singkat dan cocok untuk chat WhatsApp (tanpa format markdown).",
@@ -56,6 +57,7 @@ export function buildSystemPrompt(agent: AgentWithContext) {
       `Tahapan funnel pelanggan:\n${stages.map((s) => `${s.number}. ${s.name}: ${s.description}`).join("\n")}`,
     );
   }
+  if (shipping) parts.push(shipping);
   parts.push(
     "Jangan menjanjikan atau mengarang hal yang tidak tertulis di instruksi dan data produk di atas, " +
       "misalnya COD, ongkos kirim, area pengiriman, metode pembayaran, promo, diskon, atau stok. " +
@@ -96,7 +98,7 @@ export async function generateReply(
   const agent = { ...loaded, ...Object.fromEntries(Object.entries(overrides ?? {}).filter(([, v]) => v !== undefined)) };
   const messages = toMessages(turns);
   if (!messages.length) throw new Error("Belum ada pesan pelanggan untuk dibalas.");
-  const system = buildSystemPrompt(agent);
+  const system = buildSystemPrompt(agent, await shippingContext(turns));
   return provider() === "openai" ? callOpenAiCompatible(system, messages) : callClaude(system, messages);
 }
 

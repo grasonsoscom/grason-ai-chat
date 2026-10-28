@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import { ActionButton, ActionForm, Modal, SubmitButton } from "@/components/forms";
 import { Badge, Field, PageHeader } from "@/components/ui";
 import { db } from "@/lib/db";
-import { saveScalev, saveWebhook, testWebhook } from "./actions";
+import { formatDateTime } from "@/lib/format";
+import { importShipping, saveScalev, saveWebhook, testWebhook } from "./actions";
 
 function IntegrationCard({ icon, name, description, status, action }: { icon: string; name: string; description: string; status?: ReactNode; action?: ReactNode }) {
   return (
@@ -22,6 +23,11 @@ const soon = <Badge tone="amber">COMING SOON</Badge>;
 
 export default async function IntegrasiPage() {
   const acc = await db.account.findUniqueOrThrow({ where: { id: 1 } });
+  const [reg, cargo] = await Promise.all([
+    db.shippingRate.groupBy({ by: ["city", "district"], where: { service: "REG" } }),
+    db.shippingRate.groupBy({ by: ["city"], where: { service: "CARGO" } }),
+  ]);
+  const shipping = { reg: reg.length, cargo: cargo.length };
   return (
     <div className="space-y-8">
       <PageHeader title="Integrasi" subtitle="Hubungkan GrasOn AI Chat dengan sistem dan platform lain" />
@@ -45,6 +51,31 @@ export default async function IntegrasiPage() {
                   <p>Kirim <code className="rounded bg-slate-100 px-1">POST /api/webhooks/incoming</code> dengan header <code className="rounded bg-slate-100 px-1">x-webhook-secret</code> (nilai <code>INCOMING_WEBHOOK_SECRET</code> di .env) dan body <code className="rounded bg-slate-100 px-1">{`{"phone","name","text"}`}</code>.</p>
                   <div className="mt-3"><ActionButton action={testWebhook} fields={{}} className="btn btn-secondary text-xs">Kirim event tes</ActionButton></div>
                 </div>
+              </Modal>
+            } />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="mb-3 font-semibold text-slate-700">Ekspedisi</h2>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <IntegrationCard icon="🚚" name="Ongkir J&T (Excel)"
+            description={shipping.reg || shipping.cargo
+              ? `${shipping.reg.toLocaleString("id-ID")} kecamatan REG, ${shipping.cargo.toLocaleString("id-ID")} kota Cargo. AI Agent otomatis menjawab pertanyaan ongkir dari data ini.`
+              : "Upload tabel ongkir J&T REG dan Cargo supaya AI Agent bisa menjawab pertanyaan ongkir otomatis."}
+            status={shipping.reg || shipping.cargo ? <Badge tone="green">Aktif</Badge> : <Badge>Belum ada data</Badge>}
+            action={
+              <Modal trigger={shipping.reg || shipping.cargo ? "Perbarui Data" : "Upload Excel"} title="Ongkir J&T" triggerClass="btn btn-secondary w-full">
+                {acc.shippingAt && (
+                  <p className="mb-3 text-sm text-slate-600">Data saat ini: <span className="font-medium">{acc.shippingFile}</span>, diimpor {formatDateTime(acc.shippingAt)}.</p>
+                )}
+                <ActionForm action={importShipping}>
+                  <Field label="File Excel (.xlsx)" hint='Sheet "J&T REG": Kab/Kota, Kecamatan, lalu tarif per gudang. Sheet "J&T CARGO": Kab/Kota, tarif per berat per gudang, dan SLA. Data lama akan diganti.'>
+                    <input name="file" type="file" required accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="input" />
+                  </Field>
+                  <SubmitButton>Impor</SubmitButton>
+                </ActionForm>
+                <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">Untuk tiap tujuan, AI memakai tarif gudang yang paling murah dan menyebutkan pilihan J&T REG (per paket) dan J&T Cargo.</p>
               </Modal>
             } />
         </div>

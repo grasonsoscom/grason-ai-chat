@@ -38,6 +38,13 @@ Open http://localhost:3000 and scan the QR with WhatsApp (**Perangkat tertaut �
   - Status receipts update `sent → delivered → read` (never backwards); `failed` adds a system note with Meta's error.
 - **Setup**: WhatsApp Business page → "Pengaturan Webhook WhatsApp Cloud API" shows what's configured and the callback URL. Meta requires a public HTTPS URL (use a tunnel such as ngrok for local testing). Subscribe the app to the `messages` webhook field.
 
+### Ongkir J&T (Excel)
+
+- Import the J&T rate workbook in **Integrasi → Ekspedisi → Ongkir J&T**, or `npm run ongkir:import -- "path/to/file.xlsx"`. Importing replaces all stored rates.
+- Sheet "J&T REG": kab/kota, kecamatan, then one flat per-package price column per warehouse (header row 2). Sheet "J&T CARGO": kab/kota, then per warehouse `0-10 KG` (flat up to 10 kg), per-kg tiers, and SLA (header rows 2–3). Excel turns SLA like "7-9" into dates; the importer reads them back.
+- `src/lib/shipping.ts` scans the customer's latest messages for kecamatan / kab/kota names when they ask about shipping, and adds the matching rates to the AI prompt. Per destination the cheapest warehouse is used; REG and Cargo are both offered. A weight like "25 kg" gives a computed Cargo total.
+- Short kecamatan names that are everyday words ("Baru", "Kamu") only match after "kec"/"kecamatan".
+
 ## Optional configuration (`.env`)
 
 | Variable | Purpose |

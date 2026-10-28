@@ -17,7 +17,23 @@ model Account {
   webhookEnabled  Boolean  @default(false)
   scalevApiKey    String?
   scalevEnabled   Boolean  @default(false)
+  shippingFile    String?
+  shippingAt      DateTime?
   updatedAt       DateTime @updatedAt
+}
+
+/// J&T rates imported from Excel. REG: flat per package per kecamatan. CARGO: per kab/kota.
+model ShippingRate {
+  id        Int    @id @default(autoincrement())
+  service   String // "REG" | "CARGO"
+  warehouse String
+  city      String
+  district  String @default("")
+  price     Int // REG: per package; CARGO: up to 10 kg
+  tiers     String @default("") // CARGO: JSON [[maxKg | null, perKg], ...] above 10 kg
+  sla       String @default("") // CARGO: e.g. "7-9" (days)
+
+  @@index([service, city])
 }
 
 model CoinTransaction {
