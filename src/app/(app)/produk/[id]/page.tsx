@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ActionButton, ActionForm, SubmitButton } from "@/components/forms";
+import type { ProductVariant } from "@prisma/client";
+import { ActionButton, ActionForm, Modal, SubmitButton } from "@/components/forms";
 import { ImageInput } from "@/components/image-input";
 import { Card, Field, Table, Tabs } from "@/components/ui";
 import { db } from "@/lib/db";
 import { formatIDR } from "@/lib/format";
 import { imageUrl } from "@/lib/uploads";
-import { addVariant, deleteImage, deleteVariant, saveGeneral, savePrompt } from "../actions";
+import { deleteImage, deleteVariant, saveGeneral, savePrompt, saveVariant } from "../actions";
 
 export default async function EditProductPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string }> }) {
   const id = Number((await params).id);
@@ -56,24 +57,24 @@ export default async function EditProductPage({ params, searchParams }: { params
 
       {tab === "variasi" && (
         <div className="space-y-4">
-          <Table head={["Variasi", "SKU", "Harga", ""]} empty={p.variants.length === 0}>
+          <Table head={["Variant Name", "SKU", "Weight (gram)", "Price", "Sale Price", ""]} empty={p.variants.length === 0}>
             {p.variants.map((v) => (
               <tr key={v.id}>
-                <td className="px-4 py-3">{v.name}</td>
+                <td className="px-4 py-3 font-medium">{v.name}</td>
                 <td className="px-4 py-3">{v.sku || "-"}</td>
-                <td className="px-4 py-3">{formatIDR(v.price)}</td>
-                <td className="px-4 py-3 text-right"><ActionButton action={deleteVariant} fields={{ id: v.id }} confirm="Hapus variasi ini?">🗑️</ActionButton></td>
+                <td className="px-4 py-3">{v.weight ? v.weight.toLocaleString("id-ID") : "-"}</td>
+                <td className="px-4 py-3">{v.salePrice !== null ? <span className="text-slate-400 line-through">{formatIDR(v.price)}</span> : formatIDR(v.price)}</td>
+                <td className="px-4 py-3 font-medium text-green-700">{v.salePrice !== null ? formatIDR(v.salePrice) : "-"}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-right">
+                  <Modal trigger="✏️" title={`Edit Variasi ${v.name}`} triggerClass="btn btn-ghost text-sm"><VariantForm productId={p.id} variant={v} /></Modal>
+                  <ActionButton action={deleteVariant} fields={{ id: v.id }} confirm="Hapus variasi ini?">🗑️</ActionButton>
+                </td>
               </tr>
             ))}
           </Table>
           <Card>
-            <ActionForm action={addVariant} resetOnSuccess className="grid gap-3 sm:grid-cols-[1fr_140px_160px_auto] sm:items-end">
-              <input type="hidden" name="productId" value={p.id} />
-              <Field label="Nama variasi"><input name="name" required className="input" placeholder="1 Box" /></Field>
-              <Field label="SKU"><input name="sku" className="input" /></Field>
-              <Field label="Harga (Rp)"><input name="price" type="number" min={0} required className="input" /></Field>
-              <div className="mb-3"><SubmitButton>Tambah</SubmitButton></div>
-            </ActionForm>
+            <p className="mb-3 font-medium">Tambah variasi</p>
+            <VariantForm productId={p.id} />
           </Card>
         </div>
       )}
@@ -90,5 +91,20 @@ export default async function EditProductPage({ params, searchParams }: { params
         </Card>
       )}
     </div>
+  );
+}
+
+function VariantForm({ productId, variant }: { productId: number; variant?: ProductVariant }) {
+  return (
+    <ActionForm action={saveVariant} resetOnSuccess={!variant} className="grid gap-3 sm:grid-cols-2">
+      <input type="hidden" name="productId" value={productId} />
+      {variant && <input type="hidden" name="id" value={variant.id} />}
+      <Field label="Variant Name *"><input name="name" required defaultValue={variant?.name} className="input" placeholder="1 box" /></Field>
+      <Field label="SKU"><input name="sku" defaultValue={variant?.sku} className="input" /></Field>
+      <Field label="Weight (gram)"><input name="weight" type="number" min={0} defaultValue={variant?.weight || ""} className="input" placeholder="200" /></Field>
+      <Field label="Price (Rp) *" hint="Harga normal"><input name="price" type="number" min={0} required defaultValue={variant?.price} className="input" /></Field>
+      <Field label="Sale Price (Rp)" hint="Harga promo. Kosongkan jika tidak ada promo."><input name="salePrice" type="number" min={0} defaultValue={variant?.salePrice ?? ""} className="input" /></Field>
+      <div className="flex items-end sm:col-span-2"><SubmitButton>{variant ? "Simpan" : "Tambah"}</SubmitButton></div>
+    </ActionForm>
   );
 }

@@ -28,6 +28,16 @@ export function loadAgent(agentId: number) {
   });
 }
 
+const rp = (n: number) => `Rp${n.toLocaleString("id-ID")}`;
+
+/** "1 box (200 gram): harga normal Rp85.000, harga promo Rp42.000" */
+function variantLine(v: { name: string; weight: number; price: number; salePrice: number | null }) {
+  const name = v.weight ? `${v.name} (${v.weight.toLocaleString("id-ID")} gram)` : v.name;
+  return v.salePrice !== null
+    ? `${name}: harga normal ${rp(v.price)}, harga promo ${rp(v.salePrice)} (harga yang dibayar pelanggan)`
+    : `${name}: ${rp(v.price)}`;
+}
+
 /**
  * Builds the system prompt. The agent's Deskripsi is business configuration
  * written by the owner and is passed through verbatim.
@@ -43,7 +53,7 @@ export function buildSystemPrompt(agent: AgentWithContext, shipping?: string | n
   if (agent.products.length) {
     const list = agent.products
       .map((p) => {
-        const variants = p.variants.map((v) => `  - ${v.name}: Rp${v.price.toLocaleString("id-ID")}`).join("\n");
+        const variants = p.variants.map((v) => `  - ${variantLine(v)}`).join("\n");
         return [`* ${p.name}`, p.description && `  ${p.description}`, p.aiPrompt && `  Catatan: ${p.aiPrompt}`, variants]
           .filter(Boolean)
           .join("\n");

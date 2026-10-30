@@ -17,7 +17,7 @@ export default async function ProdukPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {products.map((p) => {
-            const prices = p.variants.map((v) => v.price);
+            const prices = p.variants.map((v) => v.salePrice ?? v.price);
             return (
               <div key={p.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                 <Link href={`/produk/${p.id}`}>

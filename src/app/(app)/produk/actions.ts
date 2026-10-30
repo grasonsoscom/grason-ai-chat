@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { num, required, run, str, type ActionState } from "@/lib/action";
+import { num, optId, required, run, str, type ActionState } from "@/lib/action";
 import { removeImage, saveImage } from "@/lib/uploads";
 
 export async function createProduct() {
@@ -48,15 +48,23 @@ export async function deleteImage(_: ActionState, fd: FormData) {
   });
 }
 
-export async function addVariant(_: ActionState, fd: FormData) {
+/** Adds a variant, or updates it when `id` is set. */
+export async function saveVariant(_: ActionState, fd: FormData) {
   return run(async () => {
     await requireUser();
+    const id = optId(fd, "id");
     const productId = Number(fd.get("productId"));
     const price = num(fd, "price");
-    if (price < 0) throw new Error("Harga tidak boleh negatif.");
-    await db.productVariant.create({ data: { productId, name: required(fd, "name", "Nama variasi"), price, sku: str(fd, "sku") } });
+    const weight = num(fd, "weight");
+    const salePrice = str(fd, "salePrice") ? num(fd, "salePrice") : null;
+    if (price < 0 || weight < 0 || (salePrice ?? 0) < 0) throw new Error("Harga dan berat tidak boleh negatif.");
+    if (salePrice !== null && salePrice > price) throw new Error("Sale Price tidak boleh lebih besar dari Price.");
+    const data = { name: required(fd, "name", "Nama variasi"), sku: str(fd, "sku"), weight: Math.round(weight), price, salePrice };
+    if (id) await db.productVariant.update({ where: { id, productId }, data });
+    else await db.productVariant.create({ data: { productId, ...data } });
     revalidatePath(`/produk/${productId}`);
-    return "Variasi ditambahkan.";
+    revalidatePath("/produk");
+    return id ? "Variasi diperbarui." : "Variasi ditambahkan.";
   });
 }
 

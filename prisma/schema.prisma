@@ -180,8 +180,10 @@ model ProductVariant {
   productId Int
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   name      String
-  price     Int     @default(0)
   sku       String  @default("")
+  weight    Int     @default(0) // gram
+  price     Int     @default(0) // normal price
+  salePrice Int? // promo price; null = no promo
 }
 
 model ProductImage {
