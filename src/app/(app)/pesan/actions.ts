@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { optId, required, run, str, type ActionState } from "@/lib/action";
 import { aiRespond, recordInbound, sendStaffMessage, sendTemplateMessage } from "@/lib/messaging";
+import { omsHandover } from "@/lib/oms-sync";
 
 export async function sendMessage(_: ActionState, fd: FormData) {
   return run(async () => {
@@ -22,7 +23,7 @@ export async function sendMessage(_: ActionState, fd: FormData) {
 
 export async function updateConversation(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    const me = await requireUser();
     const id = Number(fd.get("conversationId"));
     const mode = str(fd, "mode");
     if (!["ai", "staf", "eskalasi"].includes(mode)) throw new Error("Mode tidak valid.");
@@ -32,6 +33,8 @@ export async function updateConversation(_: ActionState, fd: FormData) {
       data: { mode, assignedToId: optId(fd, "assignedToId"), ...(before.mode !== mode ? { modeChangedAt: new Date() } : {}) },
     });
     await db.customer.update({ where: { id: conv.customerId }, data: { stageId: optId(fd, "stageId") } });
+    // TODO(product): should switching to "staf" (AI off) also count as an OMS handover?
+    if (before.mode !== "eskalasi" && mode === "eskalasi") await omsHandover(id, `Dieskalasi manual oleh ${me.name}`);
     revalidatePath("/pesan");
     return "Percakapan diperbarui.";
   });
