@@ -30,22 +30,10 @@ async function ensureDemoUser() {
   console.log(`Demo account ready: ${DEMO_EMAIL} (password in prisma/seed.ts)`);
 }
 
-/**
- * Login is by WhatsApp QR, matched on the staff phone number. Set
- * SEED_ADMIN_PHONE to your own WhatsApp number so you can sign in as admin.
- */
-async function ensureAdminPhone() {
-  const phone = process.env.SEED_ADMIN_PHONE?.trim();
-  if (!phone) return console.log("SEED_ADMIN_PHONE not set: no account can log in by WhatsApp QR yet.");
-  await db.user.update({ where: { email: ADMIN_EMAIL }, data: { phone } });
-  console.log("Admin WhatsApp number set from SEED_ADMIN_PHONE.");
-}
-
 async function main() {
   if (await db.account.findUnique({ where: { id: 1 } })) {
     console.log("Database already seeded, skipping sample data.");
     await ensureDemoUser();
-    await ensureAdminPhone();
     return;
   }
   if (!ADMIN_PASSWORD) throw new Error("Set SEED_ADMIN_PASSWORD in the Vercel environment variables before the first deploy.");
@@ -143,7 +131,6 @@ async function main() {
 
   console.log(`Seeded. Login: ${ADMIN_EMAIL} (password in prisma/seed.ts or SEED_ADMIN_PASSWORD)`);
   await ensureDemoUser();
-  await ensureAdminPhone();
 }
 
 main().finally(() => db.$disconnect());

@@ -1,4 +1,4 @@
-// Shared Baileys (unofficial WhatsApp Web client) setup for QR login and WhatsApp Hub.
+// Shared Baileys (unofficial WhatsApp Web client) setup for WhatsApp Hub.
 import makeWASocket, { Browsers, fetchLatestBaileysVersion, useMultiFileAuthState } from "baileys";
 
 type Logger = NonNullable<Parameters<typeof makeWASocket>[0]["logger"]>;

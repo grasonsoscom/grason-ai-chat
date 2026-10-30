@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Baileys (WhatsApp QR login) uses native/Node-only deps; don't bundle it.
+  // Baileys (WhatsApp Hub) uses native/Node-only deps; don't bundle it.
   serverExternalPackages: ["baileys", "exceljs"],
   experimental: {
     serverActions: {

@@ -8,22 +8,16 @@ Full-stack implementation of the PRD in `prd.md`: Next.js 15 (App Router, Server
 
 ```bash
 npm install
-cp .env.example .env   # fill AUTH_SECRET, INCOMING_WEBHOOK_SECRET, SEED_ADMIN_PHONE
+cp .env.example .env   # fill AUTH_SECRET, INCOMING_WEBHOOK_SECRET
 npm run setup          # create database + seed sample data
 npm run dev
 ```
 
-Open http://localhost:3000 and scan the QR with WhatsApp (**Perangkat tertaut → Tautkan perangkat**). The scanner's number must match a staff phone; `SEED_ADMIN_PHONE` sets the admin's. Run `npm run db:seed` again after changing it.
-
-### WhatsApp QR login
-
-- Uses [Baileys](https://github.com/WhiskeySockets/Baileys), an **unofficial** WhatsApp Web client. It can break when WhatsApp changes its protocol, and its use may conflict with WhatsApp's terms. Email + password login stays available on the same page as a fallback (test logins in `prisma/seed.ts`).
-- The linked device is only used to read the scanner's own number and is logged out immediately; the temporary auth files are deleted.
-- Attempts are kept in memory, so it needs a single long-running Node process (not serverless).
+Open http://localhost:3000 and sign in with email + password (test logins in `prisma/seed.ts`).
 
 ### WhatsApp Hub (QR-linked numbers)
 
-- **WhatsApp → WhatsApp Hub → + Scan QR WhatsApp** links a number as a device (`apiType` "WhatsApp Hub"), also via Baileys. The session stays connected: inbound text messages go through `recordInbound` (AI agent included) and staff/AI/broadcast replies go out through that number (`src/lib/channel.ts`).
+- **WhatsApp → WhatsApp Hub → + Scan QR WhatsApp** links a number as a device (`apiType` "WhatsApp Hub"), via [Baileys](https://github.com/WhiskeySockets/Baileys), an **unofficial** WhatsApp Web client that can break when WhatsApp changes its protocol. The session stays connected: inbound text messages go through `recordInbound` (AI agent included) and staff/AI/broadcast replies go out through that number (`src/lib/channel.ts`).
 - Session credentials are stored in `WA_HUB_DIR` (default `.wa-hub/`, git-ignored). They give full access to the linked WhatsApp account: keep that folder private and out of backups you share.
 - Sessions are restored on server start (`src/instrumentation.ts`). Being logged out from the phone marks the device "Terputus"; use **Scan Ulang**.
 - No Meta templates on Hub: a template's body is sent as plain text. The 24h window rule in Pesan is unchanged.
@@ -52,7 +46,7 @@ Local dev stays on SQLite; Vercel uses PostgreSQL. `npm run vercel-build` (set i
 - **Database**: add Neon (Storage / Marketplace) to the project; it sets `DATABASE_URL` and `DATABASE_URL_UNPOOLED`. `db push` refuses destructive changes, so a schema change that drops data fails the build instead of deleting it.
 - **Images**: connect a Vercel Blob store (`BLOB_READ_WRITE_TOKEN`). Product images are stored there as public URLs; uploads are refused on Vercel without it.
 - **Seed**: the first build creates the sample data and `admin@centris.test` with `SEED_ADMIN_PASSWORD` (required on Vercel). The demo account is not created on Vercel.
-- **WhatsApp Hub and QR login are off on Vercel** (`src/lib/runtime.ts`): they need a long-running process. Use the Cloud API; webhook URL `https://<domain>/api/webhooks/whatsapp`.
+- **WhatsApp Hub is off on Vercel** (`src/lib/runtime.ts`): they need a long-running process. Use the Cloud API; webhook URL `https://<domain>/api/webhooks/whatsapp`.
 - **Follow-ups**: Vercel Cron calls `GET /api/cron/followup` once a day (Hobby limit) with `CRON_SECRET`. For every 15 minutes, use an external scheduler with `POST` + `x-webhook-secret`.
 - **Ongkir**: upload the J&T Excel again in Integrasi after the first deploy.
 - Search in Pesan/Pelanggan is case-sensitive on PostgreSQL.
