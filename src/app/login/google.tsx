@@ -29,11 +29,9 @@ function GoogleIcon() {
   );
 }
 
-/** Plain link (not a form): the route redirects to Google. */
+/** Plain link (not a form): the route redirects to Google. Hidden until Google is configured. */
 export function GoogleButton({ children }: { children: ReactNode }) {
-  if (!isGoogleConfigured()) {
-    return <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-center text-xs text-slate-500">Login Google belum diatur (GOOGLE_CLIENT_ID dan GOOGLE_CLIENT_SECRET).</p>;
-  }
+  if (!isGoogleConfigured()) return null;
   return (
     <Link href="/api/auth/google" prefetch={false}
       className="flex w-full items-center justify-center gap-3 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">

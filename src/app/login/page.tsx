@@ -1,5 +1,6 @@
 import { ActionForm, SubmitButton } from "@/components/forms";
 import { Field } from "@/components/ui";
+import { isGoogleConfigured } from "@/lib/google";
 import { login } from "./actions";
 import { AuthNotice, GoogleButton } from "./google";
 
@@ -11,13 +12,17 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <div className="mb-6 text-center">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-green-600 text-xl font-bold text-white">G</div>
           <h1 className="text-xl font-semibold">Masuk ke GrasOn AI Chat</h1>
-          <p className="mt-1 text-sm text-slate-500">Masuk dengan Google atau email</p>
+          <p className="mt-1 text-sm text-slate-500">{isGoogleConfigured() ? "Masuk dengan Google atau email" : "Masuk dengan email dan kata sandi"}</p>
         </div>
         <AuthNotice code={error} />
-        <GoogleButton>Masuk dengan Google</GoogleButton>
-        <div className="my-6 flex items-center gap-3 text-xs text-slate-400">
-          <div className="h-px flex-1 bg-slate-200" />atau masuk dengan email<div className="h-px flex-1 bg-slate-200" />
-        </div>
+        {isGoogleConfigured() && (
+          <>
+            <GoogleButton>Masuk dengan Google</GoogleButton>
+            <div className="my-6 flex items-center gap-3 text-xs text-slate-400">
+              <div className="h-px flex-1 bg-slate-200" />atau masuk dengan email<div className="h-px flex-1 bg-slate-200" />
+            </div>
+          </>
+        )}
         <ActionForm action={login}>
           <Field label="Email">
             <input name="email" type="email" required autoComplete="email" className="input" />
