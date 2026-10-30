@@ -1,5 +1,4 @@
-// Shipping subsidy and COD admin subsidy scheme (COD orders only). Shipping is never
-// discounted: both subsidies only reduce the 3% COD fee, down to Rp0.
+// Shipping subsidy and COD admin subsidy scheme (COD orders only).
 // Source: "Promo Subsidi Ongkir Retail" and "Promo Subsidi Admin COD All Customer".
 import { db } from "./db";
 
@@ -15,7 +14,7 @@ const MIN_ORDER: Record<Segment, number> = { nc: 120_000, ro: 120_000, reseller:
 // A chat older than this means the customer has talked to us before.
 const REPEAT_AFTER_DAYS = 7;
 
-/** Subsidi ongkir allowance (used against the COD fee). None for resellers. */
+/** Subsidi ongkir. The scheme has no shipping subsidy for resellers. */
 function shippingSubsidy(segment: Segment, region: Region, ongkir: number) {
   if (segment === "nc") {
     if (region === "jawa") return Math.min(ongkir, 25_000);
@@ -26,19 +25,18 @@ function shippingSubsidy(segment: Segment, region: Region, ongkir: number) {
 }
 
 export type CodQuote = {
-  subtotal: number; eligible: boolean; codFee: number;
-  /** Shipping-subsidy allowance + COD admin subsidy, capped at the COD fee. */
-  codSubsidy: number; codFeeNet: number; total: number;
+  subtotal: number; eligible: boolean; shippingSubsidy: number;
+  codFee: number; adminSubsidy: number; codFeeNet: number; total: number;
 };
 
 export function codQuote(price: number, ongkir: number, segment: Segment, region: Region): CodQuote {
   const subtotal = price + ongkir;
   const eligible = subtotal >= MIN_ORDER[segment];
+  const subsidy = eligible ? shippingSubsidy(segment, region, ongkir) : 0;
   const codFee = Math.round(subtotal * COD_FEE_RATE);
-  const allowance = eligible ? shippingSubsidy(segment, region, ongkir) + COD_ADMIN_SUBSIDY : 0;
-  const codSubsidy = Math.min(allowance, codFee);
-  const codFeeNet = codFee - codSubsidy;
-  return { subtotal, eligible, codFee, codSubsidy, codFeeNet, total: subtotal + codFeeNet };
+  const adminSubsidy = eligible ? Math.min(COD_ADMIN_SUBSIDY, codFee) : 0;
+  const codFeeNet = codFee - adminSubsidy;
+  return { subtotal, eligible, shippingSubsidy: subsidy, codFee, adminSubsidy, codFeeNet, total: subtotal - subsidy + codFeeNet };
 }
 
 export function minOrder(segment: Segment) {
