@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { customerSegment } from "./promo";
 import { generateReply, type ChatTurn } from "./ai";
 import { assertCoins, spendCoins, COIN_COSTS } from "./coins";
 import { sendTemplateVia, sendTextVia } from "./channel";
@@ -81,7 +82,7 @@ export async function aiRespond(conversationId: number): Promise<string> {
 
   try {
     await assertCoins(COIN_COSTS.aiReply);
-    const reply = await generateReply(agent.id, await history(conversationId));
+    const reply = await generateReply(agent.id, await history(conversationId), undefined, await customerSegment(conv.customerId));
     await spendCoins(COIN_COSTS.aiReply, `Balasan AI (${agent.name})`);
     await deliver(conversationId, reply, "ai");
     if (agent.webhookOnReply) await emitWebhook("ai.replied", { conversationId, agentId: agent.id, text: reply });

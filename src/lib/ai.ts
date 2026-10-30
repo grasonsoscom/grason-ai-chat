@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db";
+import type { Segment } from "./promo";
 import { shippingContext } from "./shipping";
 
 const MODEL = "claude-opus-5-5";
@@ -101,6 +102,7 @@ export async function generateReply(
   agentId: number,
   turns: ChatTurn[],
   overrides?: { description?: string; personality?: string },
+  segment?: Segment,
 ) {
   if (!isAiConfigured()) throw new AiNotConfiguredError();
   const loaded = await loadAgent(agentId);
@@ -108,7 +110,10 @@ export async function generateReply(
   const agent = { ...loaded, ...Object.fromEntries(Object.entries(overrides ?? {}).filter(([, v]) => v !== undefined)) };
   const messages = toMessages(turns);
   if (!messages.length) throw new Error("Belum ada pesan pelanggan untuk dibalas.");
-  const system = buildSystemPrompt(agent, await shippingContext(turns));
+  // Package prices the customer pays, for the COD breakdown in the shipping section.
+  const items = agent.products.flatMap((p) =>
+    p.variants.map((v) => ({ name: agent.products.length > 1 ? `${p.name} ${v.name}` : v.name, price: v.salePrice ?? v.price })));
+  const system = buildSystemPrompt(agent, await shippingContext(turns, { items, segment }));
   return provider() === "openai" ? callOpenAiCompatible(system, messages) : callClaude(system, messages);
 }
 

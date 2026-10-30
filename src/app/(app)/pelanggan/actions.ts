@@ -16,6 +16,7 @@ export async function saveCustomer(_: ActionState, fd: FormData) {
       email: str(fd, "email"),
       notes: str(fd, "notes"),
       stageId: optId(fd, "stageId"),
+      segment: ["nc", "ro", "reseller"].includes(str(fd, "segment")) ? str(fd, "segment") : "",
     };
     if (!/^\+?\d{8,15}$/.test(data.phone.replace(/[\s-]/g, ""))) throw new Error("Format nomor telepon tidak valid.");
     data.phone = data.phone.replace(/[\s-]/g, "");

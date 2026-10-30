@@ -1,6 +1,7 @@
 ﻿// Finds J&T rates for places mentioned in a chat and formats them for the AI prompt.
 import { db } from "./db";
 import type { ChatTurn } from "./ai";
+import { SEGMENT_LABEL, codQuote, minOrder, regionFromText, type Region, type Segment } from "./promo";
 
 type Rate = { warehouse: string; city: string; district: string; price: number };
 
@@ -100,7 +101,27 @@ const rp = (n: number) => `Rp${n.toLocaleString("id-ID")}`;
  * Looks at the latest customer messages for kecamatan / kab-kota names and returns a
  * prompt section with the matching rates, or null when nobody is asking about shipping.
  */
-export async function shippingContext(turns: ChatTurn[]) {
+export type PricedItem = { name: string; price: number };
+
+/** COD breakdown per package for one destination (shipping and COD admin subsidies applied in code). */
+function codLines(ongkir: number, items: PricedItem[], segment: Segment, region: Region | null) {
+  const regions: Region[] = region ? [region] : ["jawa", "luar"];
+  const out = [`  Rincian kalau bayar COD (pelanggan: ${SEGMENT_LABEL[segment]}; subsidi berlaku jika harga paket + ongkir minimal ${rp(minOrder(segment))}):`];
+  for (const r of regions) {
+    if (!region) out.push(`  Jika alamat di ${r === "jawa" ? "Pulau Jawa" : "luar Pulau Jawa"}:`);
+    for (const it of items) {
+      const q = codQuote(it.price, ongkir, segment, r);
+      const parts = [`harga ${rp(it.price)}`, `ongkir ${rp(ongkir)}`];
+      if (q.shippingSubsidy) parts.push(`subsidi ongkir -${rp(q.shippingSubsidy)}`);
+      parts.push(`biaya COD 3% ${rp(q.codFee)}`);
+      if (q.adminSubsidy) parts.push(`subsidi admin COD -${rp(q.adminSubsidy)}`);
+      out.push(`   - ${it.name}: ${parts.join(", ")} => Total COD ${rp(q.total)}${q.eligible ? "" : " (belum memenuhi minimal order, tanpa subsidi)"}`);
+    }
+  }
+  return out;
+}
+
+export async function shippingContext(turns: ChatTurn[], opts: { items?: PricedItem[]; segment?: Segment } = {}) {
   const recent = turns.slice(-6);
   if (!recent.some((t) => INTENT.test(t.text))) return null;
   const index = await loadIndex();
@@ -125,10 +146,16 @@ export async function shippingContext(turns: ChatTurn[]) {
   const inCity = matches.filter((m) => mentionedCities.has(m.city));
   if (inCity.length) matches = inCity;
 
+  const items = opts.items ?? [];
+  const segment = opts.segment ?? "nc";
+  const region = regionFromText(text);
+  const cod = (ongkir: number) => (items.length ? codLines(ongkir, items, segment, region) : []);
+
   const lines: string[] = [];
   if (matches.length && matches.length <= 6) {
     for (const m of matches) {
       lines.push(`- Kec. ${districtKey(m.district)}, ${m.city}\n  J&T REG: ${rp(m.price)} per paket (gudang ${m.warehouse})`);
+      if (matches.length === 1) lines.push(...cod(m.price));
     }
     if (matches.length > 1) lines.push("Ada beberapa kecamatan yang cocok: tanyakan kab/kota tujuannya kalau belum jelas.");
   } else if (matches.length > 6) {
@@ -141,6 +168,7 @@ export async function shippingContext(turns: ChatTurn[]) {
       varies ||= lo !== hi;
       const reg = lo === hi ? `${rp(lo)} per paket untuk semua kecamatan` : `${rp(lo)} - ${rp(hi)} per paket tergantung kecamatan`;
       lines.push(`- ${city} (kecamatan belum disebut)\n  J&T REG: ${reg}`);
+      if (lo === hi && mentionedCities.size === 1) lines.push(...cod(lo));
     }
     if (varies) lines.push("Tanyakan kecamatan tujuannya supaya ongkir REG bisa dipastikan.");
   } else {
@@ -151,6 +179,9 @@ export async function shippingContext(turns: ChatTurn[]) {
     "Data ongkir J&T dari database (dicari otomatis dari pesan terbaru pelanggan). Angka di sini boleh kamu sampaikan dan berlaku walaupun di balasan sebelumnya kamu bilang belum ada datanya; jangan mengubah atau mengarang angka lain:",
     ...lines,
     "Cara menyampaikan: pengiriman hanya pakai J&T REG (ongkir per paket). Jangan menawarkan atau menyebut J&T Cargo maupun ekspedisi lain. " +
-      "Estimasi waktu pengiriman tidak ada di data, jadi jangan dijanjikan.",
+      "Estimasi waktu pengiriman tidak ada di data, jadi jangan dijanjikan. " +
+      "Subsidi ongkir dan subsidi admin COD hanya untuk pembayaran COD; untuk Transfer, total = harga paket + ongkir. " +
+      "Kalau ada Rincian COD di atas, pakai angkanya apa adanya (jangan hitung ulang) dan sebutkan rinciannya. " +
+      (region ? "" : "Pilih rincian sesuai provinsi alamat pelanggan (Pulau Jawa: Banten, DKI Jakarta, Jawa Barat, Jawa Tengah, DI Yogyakarta, Jawa Timur)."),
   ].join("\n");
 }

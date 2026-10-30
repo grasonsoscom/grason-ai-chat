@@ -122,6 +122,8 @@ model Customer {
   phone         String           @unique
   email         String           @default("")
   notes         String           @default("")
+  // "" = auto from chat history (NC or RO), or set by staff: "nc" | "ro" | "reseller"
+  segment       String           @default("")
   stageId       Int?
   stage         FunnelStage?     @relation(fields: [stageId], references: [id], onDelete: SetNull)
   labels        Label[]

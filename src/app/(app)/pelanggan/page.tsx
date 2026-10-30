@@ -59,6 +59,14 @@ function CustomerForm({ customer, labels, stages }: { customer?: Customer & { la
       <Field label="Nama *"><input name="name" required defaultValue={customer?.name} className="input" /></Field>
       <Field label="Nomor telepon *" hint="Format internasional, contoh +62..."><input name="phone" required defaultValue={customer?.phone} className="input" /></Field>
       <Field label="Email"><input name="email" type="email" defaultValue={customer?.email} className="input" /></Field>
+      <Field label="Jenis customer" hint="Menentukan skema subsidi ongkir dan admin COD. Otomatis: RO jika pernah chat lebih dari 7 hari lalu, selain itu New Customer.">
+        <select name="segment" defaultValue={customer?.segment ?? ""} className="input">
+          <option value="">Otomatis dari riwayat chat</option>
+          <option value="nc">New Customer (NC)</option>
+          <option value="ro">Repeat Order (RO)</option>
+          <option value="reseller">Reseller</option>
+        </select>
+      </Field>
       <Field label="Tahapan funnel">
         <select name="stageId" defaultValue={customer?.stageId ?? ""} className="input">
           <option value="">Tanpa tahapan</option>

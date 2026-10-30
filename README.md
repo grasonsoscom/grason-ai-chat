@@ -43,6 +43,7 @@ Open http://localhost:3000 and sign in with email + password (test logins in `pr
 - Import the J&T rate workbook in **Integrasi → Ekspedisi → Ongkir J&T**, or `npm run ongkir:import -- "path/to/file.xlsx"`. Importing replaces all stored rates.
 - Sheet "J&T REG": kab/kota, kecamatan, then one flat per-package price column per warehouse (header row 2). Sheet "J&T CARGO": kab/kota, then per warehouse `0-10 KG` (flat up to 10 kg), per-kg tiers, and SLA (header rows 2–3). Excel turns SLA like "7-9" into dates; the importer reads them back.
 - `src/lib/shipping.ts` scans the customer's latest messages for kecamatan / kab/kota names when they ask about shipping, and adds the matching rates to the AI prompt. Per destination the cheapest warehouse is used. Only J&T REG is offered; CARGO rates are imported but not given to the AI.
+- COD pricing (`src/lib/promo.ts`): COD fee 3% of (package price + shipping); shipping subsidy (NC: Jawa up to 25.000, outside Jawa 25.000 if shipping >= 50.000 else 50%; RO: Jawa up to 30.000, outside Jawa up to 50.000; none for resellers) and a 5.000 COD admin subsidy apply only to COD orders whose package price + shipping reaches the minimum (120.000, resellers 200.000). The breakdown per package is computed in code and added to the AI prompt. Customer type is set in Pelanggan, or automatic: RO if the customer first chatted more than 7 days ago. Jawa vs outside Jawa comes from the province in the address.
 - Short kecamatan names that are everyday words ("Baru", "Kamu") only match after "kec"/"kecamatan".
 
 ## Deploying to Vercel
