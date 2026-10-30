@@ -2,14 +2,13 @@
 import { db } from "./db";
 import type { ChatTurn } from "./ai";
 
-type Rate = { warehouse: string; city: string; district: string; price: number; tiers: [number | null, number][]; sla: string };
+type Rate = { warehouse: string; city: string; district: string; price: number };
 
 type Index = {
   version: string;
   districts: Map<string, Rate[]>; // normalized kecamatan -> cheapest REG rate per city
   cities: Map<string, string>; // normalized kab/kota (or alias) -> REG city name
   regByCity: Map<string, Rate[]>;
-  cargo: Map<string, Rate>; // normalized city -> cheapest CARGO rate
   maxWords: number;
 };
 
@@ -32,31 +31,19 @@ function cityKeys(c: string) {
 
 const cheaper = (a: Rate | undefined, b: Rate) => (!a || b.price < a.price ? b : a);
 
-/** Cargo sheet spells some cities differently ("TULUNG AGUNG", "KAB. TANGERANG"). */
-const compact = (s: string) => norm(s).replace(/ /g, "");
-
-function cargoFor(index: Index, city: string) {
-  return index.cargo.get(compact(city)) ?? index.cargo.get(compact(cityKeys(city).at(-1)!));
-}
-
 async function loadIndex(): Promise<Index | null> {
   const agg = await db.shippingRate.aggregate({ _max: { id: true }, _count: true });
   if (!agg._count) return null;
   const version = `${agg._max.id}:${agg._count}`;
   if (g.shippingIndex?.version === version) return g.shippingIndex;
 
-  const rows = await db.shippingRate.findMany();
+  // Only J&T REG is offered to customers; CARGO rows stay stored but unused.
+  const rows = await db.shippingRate.findMany({ where: { service: "REG" } });
   const regBest = new Map<string, Rate>(); // city|district -> cheapest warehouse
-  const cargo = new Map<string, Rate>();
   for (const r of rows) {
-    const rate: Rate = { warehouse: r.warehouse, city: r.city, district: r.district, price: r.price, tiers: r.tiers ? JSON.parse(r.tiers) : [], sla: r.sla };
-    if (r.service === "REG") {
-      const k = `${r.city}|${r.district}`;
-      regBest.set(k, cheaper(regBest.get(k), rate));
-    } else {
-      const k = compact(r.city);
-      cargo.set(k, cheaper(cargo.get(k), rate));
-    }
+    const rate: Rate = { warehouse: r.warehouse, city: r.city, district: r.district, price: r.price };
+    const k = `${r.city}|${r.district}`;
+    regBest.set(k, cheaper(regBest.get(k), rate));
   }
   const districts = new Map<string, Rate[]>();
   const cities = new Map<string, string>();
@@ -71,11 +58,11 @@ async function loadIndex(): Promise<Index | null> {
     regByCity.set(rate.city, [...(regByCity.get(rate.city) ?? []), rate]);
   }
   for (const [alias, city] of Object.entries(CITY_ALIASES)) if (regByCity.has(city) && !cities.has(alias)) cities.set(alias, city);
-  g.shippingIndex = { version, districts, cities, regByCity, cargo, maxWords };
+  g.shippingIndex = { version, districts, cities, regByCity, maxWords };
   return g.shippingIndex;
 }
 
-const INTENT = /\b(ongkir|ongkos|\w*kirim|pengiriman|ekspedisi|kurir|cargo|kargo)|\b(jnt|j&t|j n t|kecamatan|kec|kabupaten|kab|kota|alamat)\b/i;
+const INTENT = /\b(ongkir|ongkos|\w*kirim|pengiriman|ekspedisi|kurir)|\b(jnt|j&t|j n t|kecamatan|kec|kabupaten|kab|kota|alamat)\b/i;
 
 // Everyday names for places whose kab/kota is written differently in the J&T table.
 const CITY_ALIASES: Record<string, string> = { JOGJA: "YOGYAKARTA", JOGJAKARTA: "YOGYAKARTA", JOGYAKARTA: "YOGYAKARTA" };
@@ -109,35 +96,6 @@ function scan(text: string, index: Index) {
 
 const rp = (n: number) => `Rp${n.toLocaleString("id-ID")}`;
 
-/** Cargo price for a weight: flat up to 10 kg, then per kg (rounded up) at the matching tier. */
-export function cargoPrice(rate: Rate, kg: number) {
-  if (kg <= 10) return rate.price;
-  const tier = rate.tiers.find(([max]) => max === null || kg <= max);
-  return tier ? Math.ceil(kg) * tier[1] : null;
-}
-
-function cargoLine(rate: Rate | undefined, kg: number | null) {
-  if (!rate) return "J&T Cargo: tidak ada di data untuk kota ini.";
-  const tiers = rate.tiers.map(([max, perKg], i) => {
-    const min = i === 0 ? 10 : rate.tiers[i - 1][0];
-    return `${max === null ? `>${min}` : `${min}-${max}`} kg ${rp(perKg)}/kg`;
-  });
-  const parts = [`J&T Cargo (gudang ${rate.warehouse}): sampai 10 kg ${rp(rate.price)}`, ...tiers];
-  let line = parts.join("; ");
-  if (rate.sla) line += `; estimasi ${rate.sla} hari`;
-  if (kg) {
-    const total = cargoPrice(rate, kg);
-    if (total) line += `. Untuk ${kg} kg: ${rp(total)}`;
-  }
-  return line;
-}
-
-function weightOf(text: string) {
-  const m = text.match(/(\d+(?:[.,]\d+)?)\s*(kg|kilo)/i);
-  const kg = m ? Number(m[1].replace(",", ".")) : NaN;
-  return kg > 0 && kg < 10_000 ? kg : null;
-}
-
 /**
  * Looks at the latest customer messages for kecamatan / kab-kota names and returns a
  * prompt section with the matching rates, or null when nobody is asking about shipping.
@@ -167,11 +125,10 @@ export async function shippingContext(turns: ChatTurn[]) {
   const inCity = matches.filter((m) => mentionedCities.has(m.city));
   if (inCity.length) matches = inCity;
 
-  const kg = weightOf(text);
   const lines: string[] = [];
   if (matches.length && matches.length <= 6) {
     for (const m of matches) {
-      lines.push(`- Kec. ${districtKey(m.district)}, ${m.city}\n  J&T REG: ${rp(m.price)} per paket (gudang ${m.warehouse})\n  ${cargoLine(cargoFor(index, m.city), kg)}`);
+      lines.push(`- Kec. ${districtKey(m.district)}, ${m.city}\n  J&T REG: ${rp(m.price)} per paket (gudang ${m.warehouse})`);
     }
     if (matches.length > 1) lines.push("Ada beberapa kecamatan yang cocok: tanyakan kab/kota tujuannya kalau belum jelas.");
   } else if (matches.length > 6) {
@@ -183,7 +140,7 @@ export async function shippingContext(turns: ChatTurn[]) {
       const lo = Math.min(...regs.map((r) => r.price)), hi = Math.max(...regs.map((r) => r.price));
       varies ||= lo !== hi;
       const reg = lo === hi ? `${rp(lo)} per paket untuk semua kecamatan` : `${rp(lo)} - ${rp(hi)} per paket tergantung kecamatan`;
-      lines.push(`- ${city} (kecamatan belum disebut)\n  J&T REG: ${reg}\n  ${cargoLine(cargoFor(index, city), kg)}`);
+      lines.push(`- ${city} (kecamatan belum disebut)\n  J&T REG: ${reg}`);
     }
     if (varies) lines.push("Tanyakan kecamatan tujuannya supaya ongkir REG bisa dipastikan.");
   } else {
@@ -193,7 +150,7 @@ export async function shippingContext(turns: ChatTurn[]) {
   return [
     "Data ongkir J&T dari database (dicari otomatis dari pesan terbaru pelanggan). Angka di sini boleh kamu sampaikan dan berlaku walaupun di balasan sebelumnya kamu bilang belum ada datanya; jangan mengubah atau mengarang angka lain:",
     ...lines,
-    "Cara menyampaikan: sebutkan ongkir J&T REG (per paket) dan J&T Cargo (untuk kiriman berat) supaya pelanggan bisa memilih. " +
-      "Estimasi waktu REG tidak ada di data, jadi jangan dijanjikan. Kalau berat kiriman belum jelas, sebut tarif Cargo sampai 10 kg saja.",
+    "Cara menyampaikan: pengiriman hanya pakai J&T REG (ongkir per paket). Jangan menawarkan atau menyebut J&T Cargo maupun ekspedisi lain. " +
+      "Estimasi waktu pengiriman tidak ada di data, jadi jangan dijanjikan.",
   ].join("\n");
 }

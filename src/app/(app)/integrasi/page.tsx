@@ -61,7 +61,7 @@ export default async function IntegrasiPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <IntegrationCard icon="🚚" name="Ongkir J&T (Excel)"
             description={shipping.reg || shipping.cargo
-              ? `${shipping.reg.toLocaleString("id-ID")} kecamatan REG, ${shipping.cargo.toLocaleString("id-ID")} kota Cargo. AI Agent otomatis menjawab pertanyaan ongkir dari data ini.`
+              ? `${shipping.reg.toLocaleString("id-ID")} kecamatan J&T REG. AI Agent otomatis menjawab pertanyaan ongkir dari data ini.`
               : "Upload tabel ongkir J&T REG dan Cargo supaya AI Agent bisa menjawab pertanyaan ongkir otomatis."}
             status={shipping.reg || shipping.cargo ? <Badge tone="green">Aktif</Badge> : <Badge>Belum ada data</Badge>}
             action={
@@ -75,7 +75,7 @@ export default async function IntegrasiPage() {
                   </Field>
                   <SubmitButton>Impor</SubmitButton>
                 </ActionForm>
-                <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">Untuk tiap tujuan, AI memakai tarif gudang yang paling murah dan menyebutkan pilihan J&T REG (per paket) dan J&T Cargo.</p>
+                <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">Untuk tiap tujuan, AI memakai tarif J&T REG (per paket) dari gudang yang paling murah. J&T Cargo tidak ditawarkan ke pelanggan.</p>
               </Modal>
             } />
         </div>
