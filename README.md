@@ -38,6 +38,18 @@ Open http://localhost:3000 and sign in with email + password (test logins in `pr
   - Status receipts update `sent → delivered → read` (never backwards); `failed` adds a system note with Meta's error.
 - **Setup**: WhatsApp Business page → "Pengaturan Webhook WhatsApp Cloud API" shows what's configured and the callback URL. Meta requires a public HTTPS URL (use a tunnel such as ngrok for local testing). Subscribe the app to the `messages` webhook field.
 
+### OMS GRASON (contract `cs-ai.v2`)
+
+- Off unless `OMS_BASE_URL` (including `/api/v2`) and `OMS_API_KEY` are set; without them chat behaves as before. Client: `src/lib/oms.ts`; DB wiring: `src/lib/oms-sync.ts`. Contract and guide live in `grasonsoscom/grason-oms` (`docs/api-contract/cs-ai.v2.yaml`, `docs/integrasi/cs-ai.md`).
+- **Lead**: a new conversation creates an OMS lead (`external_id` `conv-<conversation id>`), and the OMS id is stored on the conversation. A failed attempt adds a system note and is retried on the next sync. Conversations that existed before the integration get no lead.
+- **Lead updates**: the first AI/staff reply sends `respon_pertama_at` + status `direspon`; escalation (keyword or manual "Eskalasi") sends a one-time handover; an auto follow-up sends status `follow_up`. Failures only add a system note.
+- **Orders**: staff create them in Pesan with **+ Buat Order OMS** (products with a SKU, COD/transfer, ongkir, structured address). The total comes from `codQuote` (region from the province), `external_id` is `checkout-<id>`, and a failed attempt is retried with the same id. **Verifikasi COD** (after the buyer confirms address and COD amount) verifies every order of the checkout; orders flagged `perlu_verifikasi_manusia` (RTS history) cannot be verified here. The AI does not create orders.
+- **Prices**: the Produk page warns when a variant's price (promo price if set) differs from OMS `harga_jual` for the same SKU, since OMS then rejects the order (`total_tidak_cocok`). Prices are not changed automatically.
+- Handover is sent only on escalation (not when the AI switch is turned off), and a customer keeps one lead (no new lead for a returning customer).
+- **Webhook**: `POST /api/webhooks/oms` checks `X-Oms-Signature` (HMAC-SHA256 of `<X-Oms-Timestamp>.<raw body>` with `OMS_WEBHOOK_SECRET`, 5-minute window), ignores repeated `event_id`s, updates the stored order status (newest `terjadi_at` wins) and adds a system note to the conversation. No WhatsApp message is sent. Give the OMS team `https://<domain>/api/webhooks/oms`.
+- 429 waits and retries once when `Retry-After` is 10 s or less; otherwise the error says when to retry. OMS error codes (`total_tidak_cocok`, `stok_tidak_cukup`, …) become Indonesian messages.
+- `npm test` runs the unit tests (`node:test` via tsx), including the HMAC test vector from the OMS guide.
+
 ### Ongkir J&T (Excel)
 
 - Import the J&T rate workbook in **Integrasi → Ekspedisi → Ongkir J&T**, or `npm run ongkir:import -- "path/to/file.xlsx"`. Importing replaces all stored rates.
@@ -66,6 +78,8 @@ Local dev stays on SQLite; Vercel uses PostgreSQL. `npm run vercel-build` (set i
 | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp Cloud API sending. Without them, outgoing messages are stored as `simulated`. |
 | `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` | Cloud API webhook verification and signature check. Without the app secret, the webhook rejects every POST. |
 | `INCOMING_WEBHOOK_SECRET` | Required header `x-webhook-secret` for `POST /api/webhooks/incoming` and `POST /api/cron/followup`. |
+| `OMS_BASE_URL`, `OMS_API_KEY` | OMS GRASON integration (leads, orders). Without both, the integration is off. |
+| `OMS_WEBHOOK_SECRET` | Signature secret for `POST /api/webhooks/oms`. Without it, the webhook rejects every POST. |
 | `COIN_COST_AI_REPLY`, `COIN_COST_BROADCAST_MESSAGE` | Coin cost per action. **TBD**, default 0. Balance is checked before the action runs whenever cost > 0. |
 
 ## Structure

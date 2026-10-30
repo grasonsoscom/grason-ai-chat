@@ -149,7 +149,13 @@ model Conversation {
   lastMessageAt   DateTime  @default(now())
   lastInboundAt   DateTime?
   lastFollowupAt  DateTime?
+  // OMS GRASON lead (external_id "conv-<id>"). Pending = new conversation whose lead is not created yet.
+  omsLeadId       String?   @unique
+  omsLeadPending  Boolean   @default(false)
+  omsRespondedAt  DateTime?
+  omsHandoverAt   DateTime?
   messages        Message[]
+  omsCheckouts    OmsCheckout[]
 }
 
 model Message {
@@ -291,4 +297,39 @@ model CalendarEvent {
   customerId Int?
   customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   createdAt  DateTime  @default(now())
+}
+
+/// One POST /orders to OMS GRASON. externalId is sent as external_id, so retries are idempotent.
+model OmsCheckout {
+  id             Int          @id @default(autoincrement())
+  externalId     String       @unique
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  orderGroupId   String?
+  orders         OmsOrder[]
+  createdAt      DateTime     @default(now())
+}
+
+/// An OMS order (one per entity SSR/FHI). id = OMS order uuid.
+model OmsOrder {
+  id         String      @id
+  checkoutId Int
+  checkout   OmsCheckout @relation(fields: [checkoutId], references: [id], onDelete: Cascade)
+  nomor      String
+  entitas    String
+  status     String
+  nilaiCod   Int
+  perluVerifikasiManusia Boolean @default(false)
+  // terjadi_at of the latest applied webhook; older events do not overwrite status.
+  statusAt   DateTime?
+}
+
+/// Processed OMS webhook events, to ignore redeliveries of the same event_id.
+model OmsEvent {
+  eventId    String   @id
+  jenis      String
+  orderId    String
+  status     String
+  terjadiAt  DateTime
+  receivedAt DateTime @default(now())
 }

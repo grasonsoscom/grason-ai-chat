@@ -1,15 +1,18 @@
 "use client";
 
-import { createContext, useActionState, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, startTransition, useActionState, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 import type { ActionState } from "@/lib/action";
 
 type Action = (prev: ActionState, fd: FormData) => Promise<ActionState>;
 
 const ModalContext = createContext<{ close: () => void } | null>(null);
+// Pending state for forms submitted with keepValues (useFormStatus does not see those).
+const PendingContext = createContext(false);
 
 export function SubmitButton({ children, variant = "primary", className = "" }: { children: ReactNode; variant?: "primary" | "secondary" | "danger"; className?: string }) {
-  const { pending } = useFormStatus();
+  const status = useFormStatus();
+  const pending = useContext(PendingContext) || status.pending;
   return (
     <button type="submit" disabled={pending} className={`btn btn-${variant} ${className}`}>
       {pending ? "Memproses..." : children}
@@ -17,10 +20,14 @@ export function SubmitButton({ children, variant = "primary", className = "" }: 
   );
 }
 
+/**
+ * `keepValues`: submit without React's automatic form reset, so a long form keeps what
+ * was typed when the action returns an error.
+ */
 export function ActionForm({
-  action, children, className = "", resetOnSuccess = false, showOk = true,
-}: { action: Action; children: ReactNode; className?: string; resetOnSuccess?: boolean; showOk?: boolean }) {
-  const [state, formAction] = useActionState(action, null);
+  action, children, className = "", resetOnSuccess = false, showOk = true, keepValues = false,
+}: { action: Action; children: ReactNode; className?: string; resetOnSuccess?: boolean; showOk?: boolean; keepValues?: boolean }) {
+  const [state, formAction, pending] = useActionState(action, null);
   const ref = useRef<HTMLFormElement>(null);
   const modal = useContext(ModalContext);
   useEffect(() => {
@@ -31,8 +38,10 @@ export function ActionForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.at]);
   return (
-    <form ref={ref} action={formAction} className={className}>
-      {children}
+    <form ref={ref} className={className} {...(keepValues
+      ? { onSubmit: (e) => { e.preventDefault(); const fd = new FormData(e.currentTarget); startTransition(() => formAction(fd)); } }
+      : { action: formAction })}>
+      <PendingContext.Provider value={pending}>{children}</PendingContext.Provider>
       {state?.error && <p role="alert" className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>}
       {showOk && !modal && state?.ok && <p className="mt-2 text-sm text-green-700">{state.ok}</p>}
     </form>

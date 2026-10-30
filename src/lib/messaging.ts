@@ -5,6 +5,7 @@ import { assertCoins, spendCoins, COIN_COSTS } from "./coins";
 import { sendTemplateVia, sendTextVia } from "./channel";
 import { insideServiceWindow } from "./whatsapp";
 import { emitWebhook } from "./webhook";
+import { omsFirstResponse, omsFollowUp, omsHandover, startOmsLead } from "./oms-sync";
 
 async function findAgentForDevice(deviceId: number | null) {
   if (deviceId) {
@@ -42,6 +43,7 @@ export async function recordInbound(input: { phone: string; name?: string; text:
     create: { phone, name: input.name?.trim() || phone },
   });
   const deviceId = input.deviceId ?? (await db.device.findFirst({ orderBy: { id: "asc" } }))?.id ?? null;
+  const isNew = !(await db.conversation.findUnique({ where: { customerId: customer.id }, select: { id: true } }));
   const now = new Date();
   const conv = await db.conversation.upsert({
     where: { customerId: customer.id },
@@ -52,6 +54,8 @@ export async function recordInbound(input: { phone: string; name?: string; text:
     data: { conversationId: conv.id, direction: "in", sender: "customer", text: input.text, status: "read", externalId: input.externalId },
   });
   await emitWebhook("message.received", { conversationId: conv.id, customerId: customer.id, text: input.text });
+  // OMS lead per new conversation (one lead per customer); never throws.
+  if (isNew) await startOmsLead(conv.id);
 
   if (conv.mode !== "ai") return { conversationId: conv.id, ai: "skipped" as const };
   return { conversationId: conv.id, ai: await aiRespond(conv.id) };
@@ -76,6 +80,7 @@ export async function aiRespond(conversationId: number): Promise<string> {
       await addSystemNote(conversationId, `Dieskalasi ke staf (kata kunci: "${hit}").`);
       if (agent.escalationMessage.trim()) await deliver(conversationId, agent.escalationMessage.trim(), "ai");
       await emitWebhook("conversation.escalated", { conversationId, keyword: hit });
+      await omsHandover(conversationId, `Eskalasi otomatis (kata kunci: "${hit}")`);
       return "escalated";
     }
   }
@@ -101,6 +106,7 @@ async function deliver(conversationId: number, text: string, sender: "ai" | "sta
   });
   await db.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: new Date() } });
   await emitWebhook("message.sent", { conversationId, sender, text, status: result.status });
+  if (result.status !== "failed") await omsFirstResponse(conversationId, new Date());
   return result;
 }
 
@@ -146,6 +152,7 @@ export async function runFollowups() {
       if (!insideServiceWindow(c.lastInboundAt)) continue;
       await deliver(c.id, agent.followupMessage.trim(), "ai");
       await db.conversation.update({ where: { id: c.id }, data: { lastFollowupAt: new Date() } });
+      await omsFollowUp(c.id);
       sent++;
     }
   }
