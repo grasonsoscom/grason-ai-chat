@@ -11,6 +11,8 @@ export async function sendMessage(_: ActionState, fd: FormData) {
     await requireUser();
     const id = Number(fd.get("conversationId"));
     const templateId = optId(fd, "templateId");
+    const conv = await db.conversation.findUniqueOrThrow({ where: { id } });
+    if (conv.mode === "ai") throw new Error("Agen AI sedang aktif. Matikan Agen AI untuk membalas manual.");
     if (templateId) await sendTemplateMessage(id, templateId);
     else await sendStaffMessage(id, required(fd, "text", "Pesan"));
     revalidatePath("/pesan");
@@ -24,9 +26,10 @@ export async function updateConversation(_: ActionState, fd: FormData) {
     const id = Number(fd.get("conversationId"));
     const mode = str(fd, "mode");
     if (!["ai", "staf", "eskalasi"].includes(mode)) throw new Error("Mode tidak valid.");
+    const before = await db.conversation.findUniqueOrThrow({ where: { id } });
     const conv = await db.conversation.update({
       where: { id },
-      data: { mode, assignedToId: optId(fd, "assignedToId") },
+      data: { mode, assignedToId: optId(fd, "assignedToId"), ...(before.mode !== mode ? { modeChangedAt: new Date() } : {}) },
     });
     await db.customer.update({ where: { id: conv.customerId }, data: { stageId: optId(fd, "stageId") } });
     revalidatePath("/pesan");
@@ -63,4 +66,23 @@ export async function simulateInbound(_: ActionState, fd: FormData) {
     revalidatePath("/pesan");
     return "Pesan masuk disimulasikan.";
   });
+}
+
+/** Agen AI switch in the chat room: on = AI replies, off = staff reply. */
+export async function setAiMode(conversationId: number, on: boolean): Promise<{ error?: string }> {
+  try {
+    const me = await requireUser();
+    const conv = await db.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+    const mode = on ? "ai" : "staf";
+    if (conv.mode !== mode) {
+      await db.conversation.update({ where: { id: conversationId }, data: { mode, modeChangedAt: new Date() } });
+      await db.message.create({
+        data: { conversationId, direction: "out", sender: "system", status: "sent", text: on ? `Agen AI dinyalakan oleh ${me.name}.` : `Agen AI dimatikan oleh ${me.name}. Staf membalas manual.` },
+      });
+    }
+    revalidatePath("/pesan");
+    return {};
+  } catch (e) {
+    return { error: (e as Error).message || "Gagal mengubah Agen AI." };
+  }
 }

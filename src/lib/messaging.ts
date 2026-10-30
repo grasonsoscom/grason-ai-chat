@@ -71,7 +71,7 @@ export async function aiRespond(conversationId: number): Promise<string> {
     const keywords = agent.escalationKeywords.split(",").map((k) => k.trim().toLowerCase()).filter(Boolean);
     const hit = keywords.find((k) => lastIn.text.toLowerCase().includes(k));
     if (hit) {
-      await db.conversation.update({ where: { id: conversationId }, data: { mode: "eskalasi" } });
+      await db.conversation.update({ where: { id: conversationId }, data: { mode: "eskalasi", modeChangedAt: new Date() } });
       await addSystemNote(conversationId, `Dieskalasi ke staf (kata kunci: "${hit}").`);
       if (agent.escalationMessage.trim()) await deliver(conversationId, agent.escalationMessage.trim(), "ai");
       await emitWebhook("conversation.escalated", { conversationId, keyword: hit });

@@ -142,6 +142,7 @@ model Conversation {
   assignedTo      User?     @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
   // "ai" = handled by AI agent, "staf" = handled by staff, "eskalasi" = escalated
   mode            String    @default("ai")
+  modeChangedAt   DateTime?
   unread          Int       @default(0)
   lastMessageAt   DateTime  @default(now())
   lastInboundAt   DateTime?

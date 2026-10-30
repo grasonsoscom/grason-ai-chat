@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { formatTime, timeAgo } from "@/lib/format";
 import { HUB_API_TYPE, insideServiceWindow, isConfigured } from "@/lib/whatsapp";
 import { requestAiReply, sendMessage, simulateInbound, updateConversation } from "./actions";
+import { AiToggle } from "./ai-toggle";
 
 type SP = Promise<{ view?: string; tab?: string; q?: string; c?: string }>;
 
@@ -174,9 +175,14 @@ async function ConversationPanel({ id }: { id: number }) {
             <p className="font-semibold">{conv.customer.name}</p>
             <p className="text-xs text-slate-500">{conv.customer.phone} · {conv.device?.label ?? "Tanpa perangkat"}</p>
           </div>
-          <ActionButton action={requestAiReply} fields={{ conversationId: id }} className="btn btn-secondary text-xs">🤖 Minta balasan AI</ActionButton>
+          <div className="flex items-start gap-2">
+            <ActionButton action={requestAiReply} fields={{ conversationId: id }} className="btn btn-secondary text-xs">🤖 Minta balasan AI</ActionButton>
+            <AiToggle conversationId={id} on={conv.mode === "ai"}
+              changed={conv.modeChangedAt ? `Terakhir diubah ${timeAgo(conv.modeChangedAt)}` : conv.mode === "ai" ? "Aktif sejak awal" : ""} />
+          </div>
         </div>
-        <ActionForm action={updateConversation} className="mt-3 flex flex-wrap items-end gap-2 text-sm" showOk={false}>
+        {/* key: remount so the selects pick up a mode changed by the Agen AI switch */}
+        <ActionForm key={conv.mode} action={updateConversation} className="mt-3 flex flex-wrap items-end gap-2 text-sm" showOk={false}>
           <input type="hidden" name="conversationId" value={id} />
           <select name="mode" defaultValue={conv.mode} className="input w-auto" aria-label="Ditangani oleh">
             <option value="ai">Ditangani AI</option>
@@ -217,7 +223,9 @@ async function ConversationPanel({ id }: { id: number }) {
 
       <div className="border-t border-slate-100 p-3">
         {conv.device?.apiType !== HUB_API_TYPE && !isConfigured(conv.device?.phoneNumberId) && <p className="mb-2 text-xs text-amber-700">WhatsApp API belum dikonfigurasi. Pesan disimpan sebagai simulasi.</p>}
-        {inWindow ? (
+        {conv.mode === "ai" ? (
+          <p className="rounded-lg bg-green-50 px-3 py-2 text-center text-xs text-green-800">Agen AI sedang membalas percakapan ini. Matikan <span className="font-semibold">Agen AI</span> di atas untuk membalas manual.</p>
+        ) : inWindow ? (
           <ActionForm action={sendMessage} resetOnSuccess showOk={false} className="flex gap-2">
             <input type="hidden" name="conversationId" value={id} />
             <input name="text" required placeholder="Tulis pesan..." className="input" autoComplete="off" />
