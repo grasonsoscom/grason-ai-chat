@@ -11,9 +11,11 @@ export async function login(_: ActionState, fd: FormData): Promise<ActionState> 
   const email = String(fd.get("email") ?? "").trim().toLowerCase();
   const password = String(fd.get("password") ?? "");
   const user = await db.user.findUnique({ where: { email } });
+  if (user && !user.passwordHash) return { error: "Akun ini masuk dengan Google. Klik Masuk dengan Google.", at: Date.now() };
   if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
     return { error: "Email atau kata sandi salah.", at: Date.now() };
   }
+  if (user.status === "pending") return { error: "Akun Anda masih menunggu persetujuan admin.", at: Date.now() };
   if (user.status !== "active") return { error: "Akun Anda tidak aktif.", at: Date.now() };
   (await cookies()).set(SESSION_COOKIE, await signSession(user.id), {
     httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 7 * 86400,

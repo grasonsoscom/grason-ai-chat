@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/session";
 
 // Webhooks and cron authenticate themselves (shared secret / Meta signature).
-const PUBLIC = ["/login", "/api/webhooks/incoming", "/api/webhooks/whatsapp", "/api/cron"];
+const PUBLIC = ["/login", "/daftar", "/api/auth/google", "/api/webhooks/incoming", "/api/webhooks/whatsapp", "/api/cron"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

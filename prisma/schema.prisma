@@ -63,7 +63,8 @@ model User {
   email        String          @unique
   phone        String          @default("")
   passwordHash String
-  status       String          @default("active")
+  googleId     String?         @unique
+  status       String          @default("active") // active | inactive | pending (Google sign-up awaiting admin)
   roleId       Int
   role         Role            @relation(fields: [roleId], references: [id])
   groupId      Int?

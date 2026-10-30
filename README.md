@@ -15,6 +15,12 @@ npm run dev
 
 Open http://localhost:3000 and sign in with email + password (test logins in `prisma/seed.ts`).
 
+### Google sign-in
+
+- Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (Google Cloud Console → APIs & Services → Credentials → OAuth client, type Web application). Authorized redirect URI: `<APP_URL>/api/auth/google/callback`.
+- **Daftar** (`/daftar`) creates the account with status `pending`; an admin approves it in **Staff** (and picks the role). Until then Google sign-in is refused.
+- An existing staff email signing in with Google is linked to that account (Google has verified the email).
+
 ### WhatsApp Hub (QR-linked numbers)
 
 - **WhatsApp → WhatsApp Hub → + Scan QR WhatsApp** links a number as a device (`apiType` "WhatsApp Hub"), via [Baileys](https://github.com/WhiskeySockets/Baileys), an **unofficial** WhatsApp Web client that can break when WhatsApp changes its protocol. The session stays connected: inbound text messages go through `recordInbound` (AI agent included) and staff/AI/broadcast replies go out through that number (`src/lib/channel.ts`).

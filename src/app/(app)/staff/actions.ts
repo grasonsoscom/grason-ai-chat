@@ -82,3 +82,17 @@ export async function deleteRole(_: ActionState, fd: FormData) {
     return done("Peran dihapus.");
   });
 }
+
+/** Activates a Google sign-up and sets its role. */
+export async function approveStaff(_: ActionState, fd: FormData) {
+  return run(async () => {
+    await requireAdmin();
+    const id = Number(fd.get("id"));
+    const roleId = Number(fd.get("roleId"));
+    if (!(await db.role.findUnique({ where: { id: roleId } }))) throw new Error("Pilih peran.");
+    const user = await db.user.findUnique({ where: { id } });
+    if (!user || user.status !== "pending") throw new Error("Pendaftar tidak ditemukan.");
+    await db.user.update({ where: { id }, data: { status: "active", roleId } });
+    return done(`${user.name} disetujui dan bisa masuk dengan Google.`);
+  });
+}
