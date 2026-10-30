@@ -7,10 +7,8 @@ const MESSAGES: Record<string, { tone: "error" | "info"; text: string }> = {
   "google-cancelled": { tone: "error", text: "Login Google dibatalkan." },
   "google-expired": { tone: "error", text: "Sesi login Google kedaluwarsa. Coba lagi." },
   "google-failed": { tone: "error", text: "Gagal masuk dengan Google. Coba lagi." },
-  "google-unregistered": { tone: "error", text: "Akun Google ini belum terdaftar. Daftar dulu, lalu tunggu persetujuan admin." },
+  "google-unregistered": { tone: "error", text: "Email Google ini belum terdaftar sebagai staf. Minta admin menambahkan email Anda di menu Staff." },
   inactive: { tone: "error", text: "Akun Anda tidak aktif. Hubungi admin." },
-  pending: { tone: "info", text: "Akun Anda sudah terdaftar dan masih menunggu persetujuan admin." },
-  registered: { tone: "info", text: "Pendaftaran berhasil. Akun Anda menunggu persetujuan admin; setelah disetujui, masuk dengan Google." },
 };
 
 export function AuthNotice({ code }: { code?: string }) {
@@ -32,12 +30,12 @@ function GoogleIcon() {
 }
 
 /** Plain link (not a form): the route redirects to Google. */
-export function GoogleButton({ mode, children }: { mode: "login" | "signup"; children: ReactNode }) {
+export function GoogleButton({ children }: { children: ReactNode }) {
   if (!isGoogleConfigured()) {
     return <p className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-center text-xs text-slate-500">Login Google belum diatur (GOOGLE_CLIENT_ID dan GOOGLE_CLIENT_SECRET).</p>;
   }
   return (
-    <Link href={`/api/auth/google?mode=${mode}`} prefetch={false}
+    <Link href="/api/auth/google" prefetch={false}
       className="flex w-full items-center justify-center gap-3 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
       <GoogleIcon />{children}
     </Link>

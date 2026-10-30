@@ -4,19 +4,17 @@ import { ActionButton, ActionForm, Modal, SubmitButton } from "@/components/form
 import { Badge, Field, PageHeader, Table, Tabs } from "@/components/ui";
 import { db } from "@/lib/db";
 import { formatDate } from "@/lib/format";
-import { approveStaff, deleteGroup, deleteRole, deleteStaff, saveGroup, saveRole, saveStaff } from "./actions";
+import { deleteGroup, deleteRole, deleteStaff, saveGroup, saveRole, saveStaff } from "./actions";
 
 const MODULES = ["pesan", "pelanggan", "kalender", "whatsapp", "produk", "funnels", "broadcast", "audience", "staff", "ai-agent", "integrasi"];
 
 export default async function StaffPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const tab = (await searchParams).tab ?? "staff";
-  const [allUsers, roles, groups] = await Promise.all([
+  const [users, roles, groups] = await Promise.all([
     db.user.findMany({ include: { role: true, group: true }, orderBy: { createdAt: "asc" } }),
     db.role.findMany({ include: { _count: { select: { users: true } } } }),
     db.group.findMany({ include: { _count: { select: { users: true } } } }),
   ]);
-  const pending = allUsers.filter((u) => u.status === "pending");
-  const users = allUsers.filter((u) => u.status !== "pending");
 
   return (
     <div>
@@ -27,24 +25,6 @@ export default async function StaffPage({ searchParams }: { searchParams: Promis
         { key: "peran", label: "Manajemen Peran", href: "/staff?tab=peran" },
       ]} />
 
-      {tab === "staff" && pending.length > 0 && (
-        <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
-          <p className="mb-3 text-sm font-medium text-amber-900">Pendaftar baru menunggu persetujuan ({pending.length})</p>
-          <div className="space-y-2">
-            {pending.map((u) => (
-              <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg bg-white p-3 text-sm">
-                <div className="min-w-0 flex-1"><p className="font-medium">{u.name}</p><p className="text-slate-500">{u.email} · daftar dengan Google {formatDate(u.createdAt)}</p></div>
-                <ActionForm action={approveStaff} className="flex items-center gap-2">
-                  <input type="hidden" name="id" value={u.id} />
-                  <select name="roleId" defaultValue={u.roleId} aria-label="Peran" className="input !mb-0 !w-auto py-1.5">{roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
-                  <SubmitButton>Setujui</SubmitButton>
-                </ActionForm>
-                <ActionButton action={deleteStaff} fields={{ id: u.id }} confirm={`Tolak dan hapus pendaftaran ?`} className="btn btn-ghost text-sm text-red-600">Tolak</ActionButton>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {tab === "staff" && (
         <Table head={["Name", "Phone", "Email", "Role", "Member Group", "Status", "Date Created", "Date Updated", ""]}>
@@ -115,15 +95,17 @@ function StaffForm({ user, roles, groups }: { user?: User; roles: Role[]; groups
     <ActionForm action={saveStaff}>
       {user && <input type="hidden" name="id" value={user.id} />}
       <Field label="Nama *"><input name="name" required defaultValue={user?.name} className="input" /></Field>
-      <Field label="Email *"><input name="email" type="email" required defaultValue={user?.email} className="input" /></Field>
+      <Field label="Email *" hint="Staf masuk dengan Google memakai email ini (harus akun Google / Gmail).">
+        <input name="email" type="email" required defaultValue={user?.email} className="input" />
+      </Field>
       <Field label="Telepon"><input name="phone" defaultValue={user?.phone} className="input" /></Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Peran"><select name="roleId" defaultValue={user?.roleId} className="input">{roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></Field>
         <Field label="Grup"><select name="groupId" defaultValue={user?.groupId ?? ""} className="input"><option value="">-</option>{groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
       </div>
       <Field label="Status"><select name="status" defaultValue={user?.status ?? "active"} className="input"><option value="active">active</option><option value="inactive">inactive</option></select></Field>
-      <Field label={user ? "Kata sandi baru (kosongkan jika tidak diubah)" : "Kata sandi *"} hint="Minimal 8 karakter">
-        <input name="password" type="password" autoComplete="new-password" required={!user} className="input" />
+      <Field label={user ? "Kata sandi baru (opsional)" : "Kata sandi (opsional)"} hint={user ? "Kosongkan jika tidak diubah. Minimal 8 karakter." : "Kosongkan jika staf hanya masuk dengan Google. Minimal 8 karakter."}>
+        <input name="password" type="password" autoComplete="new-password" className="input" />
       </Field>
       <SubmitButton>Simpan</SubmitButton>
     </ActionForm>

@@ -18,8 +18,8 @@ Open http://localhost:3000 and sign in with email + password (test logins in `pr
 ### Google sign-in
 
 - Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (Google Cloud Console → APIs & Services → Credentials → OAuth client, type Web application). Authorized redirect URI: `<APP_URL>/api/auth/google/callback`.
-- **Daftar** (`/daftar`) creates the account with status `pending`; an admin approves it in **Staff** (and picks the role). Until then Google sign-in is refused.
-- An existing staff email signing in with Google is linked to that account (Google has verified the email).
+- There is no self sign-up: an admin adds the staff email in **Staff** (password optional). Signing in with a Google account whose verified email matches links it to that staff account; other Google accounts are refused.
+- Changing a staff email in Staff unlinks the previous Google account.
 
 ### WhatsApp Hub (QR-linked numbers)
 

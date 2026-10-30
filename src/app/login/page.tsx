@@ -1,11 +1,10 @@
-import Link from "next/link";
 import { ActionForm, SubmitButton } from "@/components/forms";
 import { Field } from "@/components/ui";
 import { login } from "./actions";
 import { AuthNotice, GoogleButton } from "./google";
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; status?: string }> }) {
-  const { error, status } = await searchParams;
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  const { error } = await searchParams;
   return (
     <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-green-50 to-slate-100 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-lg">
@@ -14,8 +13,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           <h1 className="text-xl font-semibold">Masuk ke GrasOn AI Chat</h1>
           <p className="mt-1 text-sm text-slate-500">Masuk dengan Google atau email</p>
         </div>
-        <AuthNotice code={error ?? status} />
-        <GoogleButton mode="login">Masuk dengan Google</GoogleButton>
+        <AuthNotice code={error} />
+        <GoogleButton>Masuk dengan Google</GoogleButton>
         <div className="my-6 flex items-center gap-3 text-xs text-slate-400">
           <div className="h-px flex-1 bg-slate-200" />atau masuk dengan email<div className="h-px flex-1 bg-slate-200" />
         </div>
@@ -28,9 +27,6 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           </Field>
           <SubmitButton className="mt-2 w-full">Masuk</SubmitButton>
         </ActionForm>
-        <p className="mt-6 text-center text-sm text-slate-500">
-          Belum punya akun? <Link href="/daftar" className="font-medium text-green-700 hover:underline">Daftar</Link>
-        </p>
       </div>
     </main>
   );

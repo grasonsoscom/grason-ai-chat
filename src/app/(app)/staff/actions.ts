@@ -13,8 +13,7 @@ export async function saveStaff(_: ActionState, fd: FormData) {
     const me = await requireAdmin();
     const id = optId(fd, "id");
     const password = str(fd, "password");
-    if (!id && password.length < 8) throw new Error("Kata sandi minimal 8 karakter.");
-    if (id && password && password.length < 8) throw new Error("Kata sandi minimal 8 karakter.");
+    if (password && password.length < 8) throw new Error("Kata sandi minimal 8 karakter.");
     const status = str(fd, "status") === "inactive" ? "inactive" : "active";
     if (id === me.id && status === "inactive") throw new Error("Anda tidak dapat menonaktifkan akun sendiri.");
     const data = {
@@ -26,8 +25,13 @@ export async function saveStaff(_: ActionState, fd: FormData) {
       status,
       ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}),
     };
-    if (id) await db.user.update({ where: { id }, data });
-    else await db.user.create({ data: { ...data, passwordHash: data.passwordHash! } });
+    if (id) {
+      const before = await db.user.findUniqueOrThrow({ where: { id } });
+      // A new email means a different Google account; drop the old link.
+      await db.user.update({ where: { id }, data: { ...data, ...(before.email !== data.email ? { googleId: null } : {}) } });
+    }
+    // No password: the staff member signs in with Google using this email.
+    else await db.user.create({ data: { ...data, passwordHash: data.passwordHash ?? "" } });
     return done(id ? "Staf diperbarui." : "Staf ditambahkan.");
   });
 }
@@ -83,16 +87,3 @@ export async function deleteRole(_: ActionState, fd: FormData) {
   });
 }
 
-/** Activates a Google sign-up and sets its role. */
-export async function approveStaff(_: ActionState, fd: FormData) {
-  return run(async () => {
-    await requireAdmin();
-    const id = Number(fd.get("id"));
-    const roleId = Number(fd.get("roleId"));
-    if (!(await db.role.findUnique({ where: { id: roleId } }))) throw new Error("Pilih peran.");
-    const user = await db.user.findUnique({ where: { id } });
-    if (!user || user.status !== "pending") throw new Error("Pendaftar tidak ditemukan.");
-    await db.user.update({ where: { id }, data: { status: "active", roleId } });
-    return done(`${user.name} disetujui dan bisa masuk dengan Google.`);
-  });
-}
