@@ -111,10 +111,8 @@ function codLines(ongkir: number, items: PricedItem[], segment: Segment, region:
     if (!region) out.push(`  Jika alamat di ${r === "jawa" ? "Pulau Jawa" : "luar Pulau Jawa"}:`);
     for (const it of items) {
       const q = codQuote(it.price, ongkir, segment, r);
-      const parts = [`harga ${rp(it.price)}`, `ongkir ${rp(ongkir)}`];
-      if (q.shippingSubsidy) parts.push(`subsidi ongkir -${rp(q.shippingSubsidy)}`);
-      parts.push(`biaya COD 3% ${rp(q.codFee)}`);
-      if (q.adminSubsidy) parts.push(`subsidi admin COD -${rp(q.adminSubsidy)}`);
+      const parts = [`harga ${rp(it.price)}`, `ongkir ${rp(ongkir)}`, `biaya COD 3% ${rp(q.codFee)}`];
+      if (q.codSubsidy) parts.push(`subsidi biaya COD -${rp(q.codSubsidy)}`);
       out.push(`   - ${it.name}: ${parts.join(", ")} => Total COD ${rp(q.total)}${q.eligible ? "" : " (belum memenuhi minimal order, tanpa subsidi)"}`);
     }
   }
@@ -180,7 +178,7 @@ export async function shippingContext(turns: ChatTurn[], opts: { items?: PricedI
     ...lines,
     "Cara menyampaikan: pengiriman hanya pakai J&T REG (ongkir per paket). Jangan menawarkan atau menyebut J&T Cargo maupun ekspedisi lain. " +
       "Estimasi waktu pengiriman tidak ada di data, jadi jangan dijanjikan. " +
-      "Subsidi ongkir dan subsidi admin COD hanya untuk pembayaran COD; untuk Transfer, total = harga paket + ongkir. " +
+      "Ongkir tidak pernah dikurangi atau digratiskan. Subsidi hanya mengurangi biaya COD 3% dan hanya untuk pembayaran COD; untuk Transfer, total = harga paket + ongkir. " +
       "Kalau ada Rincian COD di atas, pakai angkanya apa adanya (jangan hitung ulang) dan sebutkan rinciannya. " +
       (region ? "" : "Pilih rincian sesuai provinsi alamat pelanggan (Pulau Jawa: Banten, DKI Jakarta, Jawa Barat, Jawa Tengah, DI Yogyakarta, Jawa Timur)."),
   ].join("\n");
