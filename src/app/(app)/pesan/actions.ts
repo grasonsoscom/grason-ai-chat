@@ -3,9 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { optId, required, run, str, type ActionState } from "@/lib/action";
+import { num, optId, required, run, str, type ActionState } from "@/lib/action";
+import { formatIDR } from "@/lib/format";
 import { aiRespond, recordInbound, sendStaffMessage, sendTemplateMessage } from "@/lib/messaging";
-import { omsHandover } from "@/lib/oms-sync";
+import { createOmsCheckout, omsHandover, verifyOmsCheckout } from "@/lib/oms-sync";
+import { codQuote, customerSegment, regionFromText } from "@/lib/promo";
 
 export async function sendMessage(_: ActionState, fd: FormData) {
   return run(async () => {
@@ -33,7 +35,7 @@ export async function updateConversation(_: ActionState, fd: FormData) {
       data: { mode, assignedToId: optId(fd, "assignedToId"), ...(before.mode !== mode ? { modeChangedAt: new Date() } : {}) },
     });
     await db.customer.update({ where: { id: conv.customerId }, data: { stageId: optId(fd, "stageId") } });
-    // TODO(product): should switching to "staf" (AI off) also count as an OMS handover?
+    // Decided: only escalation is an OMS handover; turning the AI off is not.
     if (before.mode !== "eskalasi" && mode === "eskalasi") await omsHandover(id, `Dieskalasi manual oleh ${me.name}`);
     revalidatePath("/pesan");
     return "Percakapan diperbarui.";
@@ -88,4 +90,85 @@ export async function setAiMode(conversationId: number, on: boolean): Promise<{ 
   } catch (e) {
     return { error: (e as Error).message || "Gagal mengubah Agen AI." };
   }
+}
+
+const ORDER_LINES = [1, 2, 3];
+
+/**
+ * Staff form "Buat Order OMS": sends the checkout to OMS with the COD breakdown from
+ * codQuote. A checkout that failed before is reused, so a retry keeps its external_id.
+ */
+export async function createOmsOrder(_: ActionState, fd: FormData) {
+  return run(async () => {
+    await requireUser();
+    const id = Number(fd.get("conversationId"));
+    const conv = await db.conversation.findUniqueOrThrow({ where: { id } });
+    const method = str(fd, "method") === "transfer" ? "transfer" : "cod";
+
+    const lines = ORDER_LINES.map((i) => ({ variantId: optId(fd, `variant${i}`), qty: num(fd, `qty${i}`) })).filter((l) => l.variantId);
+    if (!lines.length) throw new Error("Pilih minimal satu produk.");
+    const variants = await db.productVariant.findMany({ where: { id: { in: lines.map((l) => l.variantId!) } }, include: { product: true } });
+    const qtyBySku = new Map<string, number>();
+    let price = 0;
+    for (const l of lines) {
+      const v = variants.find((x) => x.id === l.variantId);
+      if (!v) throw new Error("Produk tidak ditemukan.");
+      if (!v.sku.trim()) throw new Error(`${v.product.name} ${v.name} belum punya SKU. Isi SKU di halaman Produk.`);
+      if (!Number.isInteger(l.qty) || l.qty < 1 || l.qty > 100) throw new Error("Jumlah per produk harus 1 sampai 100.");
+      qtyBySku.set(v.sku.trim(), (qtyBySku.get(v.sku.trim()) ?? 0) + l.qty);
+      price += (v.salePrice ?? v.price) * l.qty;
+    }
+
+    const ongkir = num(fd, "ongkir");
+    if (!Number.isInteger(ongkir) || ongkir < 0) throw new Error("Ongkir harus angka rupiah tanpa desimal.");
+    const phone = required(fd, "recipientPhone", "No. WA penerima").replace(/[\s-]/g, "");
+    if (!/^\+?\d{8,15}$/.test(phone)) throw new Error("No. WA penerima tidak valid.");
+    const kodePos = str(fd, "kodePos");
+    if (kodePos && !/^\d{5}$/.test(kodePos)) throw new Error("Kode pos harus 5 angka.");
+    const provinsi = required(fd, "provinsi", "Provinsi");
+
+    let quote;
+    if (method === "cod") {
+      const region = regionFromText(provinsi);
+      if (!region) throw new Error("Provinsi tidak dikenali. Tulis nama provinsi, mis. Jawa Barat.");
+      quote = codQuote(price, ongkir, await customerSegment(conv.customerId), region);
+    }
+
+    const retry = await db.omsCheckout.findFirst({ where: { conversationId: id, orderGroupId: null }, orderBy: { id: "desc" } });
+    const checkout = retry ?? (await db.omsCheckout.create({ data: { conversationId: id, externalId: `pending-${id}-${Date.now()}` } }));
+    const externalId = `checkout-${checkout.id}`;
+    if (checkout.externalId !== externalId) await db.omsCheckout.update({ where: { id: checkout.id }, data: { externalId } });
+
+    const result = await createOmsCheckout(id, {
+      externalId,
+      method,
+      recipient: { name: required(fd, "recipientName", "Nama penerima"), phone },
+      address: {
+        alamat: required(fd, "alamat", "Alamat"),
+        ...(str(fd, "kelurahan") ? { kelurahan: str(fd, "kelurahan") } : {}),
+        ...(str(fd, "kecamatan") ? { kecamatan: str(fd, "kecamatan") } : {}),
+        kota: required(fd, "kota", "Kota/kabupaten"),
+        provinsi,
+        ...(kodePos ? { kode_pos: kodePos } : {}),
+      },
+      items: [...qtyBySku].map(([sku, qty]) => ({ sku, qty })),
+      price,
+      ongkir,
+      quote,
+      notes: str(fd, "catatan") || undefined,
+    });
+    revalidatePath("/pesan");
+    const total = result.orders.reduce((s, o) => s + o.total, 0);
+    return `Order dibuat di OMS: ${result.orders.map((o) => o.nomor).join(", ")}. Total ${formatIDR(total)}.`;
+  });
+}
+
+/** "Verifikasi COD": the buyer confirmed address, COD amount and willingness to pay. */
+export async function verifyOmsOrder(_: ActionState, fd: FormData) {
+  return run(async () => {
+    await requireUser();
+    await verifyOmsCheckout(required(fd, "externalId", "Checkout"), new Date());
+    revalidatePath("/pesan");
+    return "Order terverifikasi di OMS.";
+  });
 }

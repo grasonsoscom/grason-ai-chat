@@ -9,7 +9,7 @@ import {
   type Address, type Checkout, type LeadUpdate, type OrderStatus, type OrderStatusEvent, type PaymentMethod,
 } from "./oms";
 
-const STATUS_LABEL: Record<OrderStatus, string> = {
+export const STATUS_LABEL: Record<OrderStatus, string> = {
   baru: "Baru", terverifikasi: "Terverifikasi", di_gudang: "Di gudang", dikirim: "Dikirim",
   terkirim: "Terkirim (diterima pembeli)", batal: "Batal", rts: "RTS (dikembalikan)",
 };
@@ -131,6 +131,8 @@ async function saveCheckout(conversationId: number, checkout: Checkout) {
 export async function createOmsCheckout(conversationId: number, input: CheckoutInput) {
   if (!omsConfigured()) throw new Error("Integrasi OMS belum dikonfigurasi. Isi OMS_BASE_URL dan OMS_API_KEY.");
   const conv = await db.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+  // An order needs a lead, also for conversations from before the integration.
+  if (!conv.omsLeadId && !conv.omsLeadPending) await db.conversation.update({ where: { id: conversationId }, data: { omsLeadPending: true } });
   const leadId = await ensureOmsLead(conversationId);
   if (!leadId) throw new Error("Lead percakapan ini belum tercatat di OMS.");
   const checkout = await oms.createOrder({
@@ -171,6 +173,22 @@ export async function verifyOmsCheckout(externalId: string, confirmedAt: Date, n
     await db.omsOrder.update({ where: { id: o.id }, data: { status: order.status } });
   }
   await note(checkout.conversationId, `Order ${checkout.orders.map((o) => o.nomor).join(", ")} terverifikasi di OMS.`);
+}
+
+export type PriceMismatch = { productId: number; name: string; sku: string; ours: number; oms: number | null };
+
+/** Variants with a SKU whose price (promo price if set) differs from OMS harga_jual, or whose SKU OMS does not know. */
+export async function omsPriceMismatches(): Promise<PriceMismatch[]> {
+  const [prices, variants] = await Promise.all([
+    oms.prices(),
+    db.productVariant.findMany({ where: { sku: { not: "" } }, include: { product: true }, orderBy: { productId: "asc" } }),
+  ]);
+  const bySku = new Map(prices.map((p) => [p.sku, p.harga_jual]));
+  return variants.flatMap((v) => {
+    const ours = v.salePrice ?? v.price;
+    const omsPrice = bySku.get(v.sku.trim()) ?? null;
+    return omsPrice === ours ? [] : [{ productId: v.productId, name: `${v.product.name} ${v.name}`, sku: v.sku, ours, oms: omsPrice }];
+  });
 }
 
 /** Refreshes stored order status from GET /orders/{id}. */

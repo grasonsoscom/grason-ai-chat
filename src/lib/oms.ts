@@ -102,7 +102,7 @@ const ERROR_TEXT: Record<string, string> = {
   stok_tidak_cukup: "Stok tidak cukup",
   sku_tidak_dikenal: "SKU tidak dikenal di OMS",
   produk_nonaktif: "Produk nonaktif di OMS",
-  total_tidak_cocok: "Total tidak cocok dengan hitungan OMS (cek harga di GET /prices)",
+  total_tidak_cocok: "Total tidak cocok dengan hitungan OMS (cek harga produk di halaman Produk)",
   rincian_tidak_valid: "Rincian ongkir/biaya COD tidak valid",
   nilai_cod_tidak_cocok: "Nilai COD yang dikonfirmasi tidak sama dengan nilai COD order",
   perlu_verifikasi_manusia: "Pelanggan punya riwayat RTS; verifikasi harus oleh CS manusia",

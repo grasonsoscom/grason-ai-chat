@@ -54,7 +54,7 @@ export async function recordInbound(input: { phone: string; name?: string; text:
     data: { conversationId: conv.id, direction: "in", sender: "customer", text: input.text, status: "read", externalId: input.externalId },
   });
   await emitWebhook("message.received", { conversationId: conv.id, customerId: customer.id, text: input.text });
-  // OMS lead per new conversation; never throws. TODO(product): returning customers are not a new lead yet.
+  // OMS lead per new conversation (one lead per customer); never throws.
   if (isNew) await startOmsLead(conv.id);
 
   if (conv.mode !== "ai") return { conversationId: conv.id, ai: "skipped" as const };

@@ -3,9 +3,11 @@ import type { Prisma } from "@prisma/client";
 import { ActionButton, ActionForm, Modal, SubmitButton } from "@/components/forms";
 import { Badge, Field } from "@/components/ui";
 import { db } from "@/lib/db";
-import { formatTime, timeAgo } from "@/lib/format";
+import { formatIDR, formatTime, timeAgo } from "@/lib/format";
+import { omsConfigured, type OrderStatus } from "@/lib/oms";
+import { STATUS_LABEL } from "@/lib/oms-sync";
 import { HUB_API_TYPE, insideServiceWindow, isConfigured } from "@/lib/whatsapp";
-import { requestAiReply, sendMessage, simulateInbound, updateConversation } from "./actions";
+import { createOmsOrder, requestAiReply, sendMessage, simulateInbound, updateConversation, verifyOmsOrder } from "./actions";
 import { AiToggle } from "./ai-toggle";
 
 type SP = Promise<{ view?: string; tab?: string; q?: string; c?: string }>;
@@ -199,6 +201,7 @@ async function ConversationPanel({ id }: { id: number }) {
           </select>
           <SubmitButton variant="secondary">Simpan</SubmitButton>
         </ActionForm>
+        {omsConfigured() && <OmsOrders conversationId={id} customer={conv.customer} />}
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto bg-slate-50 p-4">
@@ -247,5 +250,87 @@ async function ConversationPanel({ id }: { id: number }) {
         )}
       </div>
     </>
+  );
+}
+
+const ORDER_TONE: Partial<Record<string, "green" | "blue" | "amber" | "red">> = {
+  baru: "amber", terverifikasi: "blue", di_gudang: "blue", dikirim: "blue", terkirim: "green", batal: "red", rts: "red",
+};
+
+/** OMS orders of this conversation, the "Buat Order OMS" form and "Verifikasi COD". */
+async function OmsOrders({ conversationId, customer }: { conversationId: number; customer: { name: string; phone: string } }) {
+  const [checkouts, variants] = await Promise.all([
+    db.omsCheckout.findMany({ where: { conversationId, orders: { some: {} } }, include: { orders: true }, orderBy: { id: "desc" } }),
+    db.productVariant.findMany({ where: { sku: { not: "" } }, include: { product: true }, orderBy: [{ productId: "asc" }, { id: "asc" }] }),
+  ]);
+  const variantOptions = variants.map((v) => (
+    <option key={v.id} value={v.id}>{v.product.name} {v.name} ({v.sku}) {formatIDR(v.salePrice ?? v.price)}</option>
+  ));
+  return (
+    <div className="mt-3 space-y-2 text-sm">
+      {checkouts.map((c) => {
+        const open = c.orders.some((o) => o.status === "baru");
+        const human = c.orders.some((o) => o.perluVerifikasiManusia);
+        const total = c.orders.reduce((s, o) => s + o.nilaiCod, 0);
+        return (
+          <div key={c.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+            {c.orders.map((o) => (
+              <span key={o.id} className="flex items-center gap-1">
+                <span className="font-medium">{o.nomor}</span>
+                <span className="text-slate-500">{o.entitas} · {formatIDR(o.nilaiCod)}</span>
+                <Badge tone={ORDER_TONE[o.status] ?? "slate"}>{STATUS_LABEL[o.status as OrderStatus] ?? o.status}</Badge>
+              </span>
+            ))}
+            {human && <span className="text-xs text-red-700">Riwayat RTS: verifikasi oleh CS manusia lewat OMS.</span>}
+            {open && !human && (
+              <ActionButton action={verifyOmsOrder} fields={{ externalId: c.externalId }} className="btn btn-secondary ml-auto text-xs"
+                confirm={`Pembeli sudah mengonfirmasi alamat lengkap dan nilai COD ${formatIDR(total)}, dan bersedia membayar?`}>
+                Verifikasi COD
+              </ActionButton>
+            )}
+          </div>
+        );
+      })}
+      <Modal trigger="+ Buat Order OMS" title="Buat Order OMS" triggerClass="btn btn-secondary text-xs" wide>
+        {variants.length === 0 ? (
+          <p className="text-sm text-slate-500">Belum ada varian produk dengan SKU. Isi SKU varian di halaman <Link href="/produk" className="text-green-700 underline">Produk</Link> agar sama dengan SKU di OMS.</p>
+        ) : (
+          <ActionForm action={createOmsOrder} keepValues>
+            <input type="hidden" name="conversationId" value={conversationId} />
+            <p className="mb-3 text-xs text-slate-500">Total dihitung dengan aturan promo AI Chat (subsidi ongkir dan admin COD) dari harga produk di sini. Harga harus sama dengan OMS, kalau tidak order ditolak.</p>
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="mb-2 flex gap-2">
+                <select name={`variant${i}`} required={i === 1} defaultValue="" className="input" aria-label={`Produk ${i}`}>
+                  <option value="">{i === 1 ? "Pilih produk" : "Produk tambahan (opsional)"}</option>
+                  {variantOptions}
+                </select>
+                <input name={`qty${i}`} type="number" min={1} max={100} defaultValue={1} className="input w-20" aria-label={`Jumlah ${i}`} />
+              </div>
+            ))}
+            <div className="grid gap-x-3 sm:grid-cols-2">
+              <Field label="Metode bayar">
+                <select name="method" defaultValue="cod" className="input">
+                  <option value="cod">COD</option>
+                  <option value="transfer">Transfer</option>
+                </select>
+              </Field>
+              <Field label="Ongkir (Rp)" hint="Ongkir sebelum subsidi."><input name="ongkir" type="number" min={0} step={1} required className="input" /></Field>
+              <Field label="Nama penerima"><input name="recipientName" required defaultValue={customer.name} className="input" /></Field>
+              <Field label="No. WA penerima"><input name="recipientPhone" required defaultValue={customer.phone} className="input" /></Field>
+            </div>
+            <Field label="Alamat" hint="Jalan, nomor rumah, RT/RW, patokan."><textarea name="alamat" required rows={2} className="input" /></Field>
+            <div className="grid gap-x-3 sm:grid-cols-2">
+              <Field label="Kelurahan"><input name="kelurahan" className="input" /></Field>
+              <Field label="Kecamatan"><input name="kecamatan" className="input" /></Field>
+              <Field label="Kota/kabupaten"><input name="kota" required className="input" /></Field>
+              <Field label="Provinsi"><input name="provinsi" required className="input" placeholder="mis. Jawa Barat" /></Field>
+              <Field label="Kode pos"><input name="kodePos" inputMode="numeric" pattern="\d{5}" className="input" /></Field>
+            </div>
+            <Field label="Catatan (opsional)"><textarea name="catatan" rows={2} maxLength={1000} className="input" /></Field>
+            <SubmitButton>Kirim ke OMS</SubmitButton>
+          </ActionForm>
+        )}
+      </Modal>
+    </div>
   );
 }
