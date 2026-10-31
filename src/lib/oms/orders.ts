@@ -223,12 +223,20 @@ export async function submitVerification(orderRowId: number, input: Verifikasi) 
   return order;
 }
 
+/**
+ * Polls OMS for one order. Status changes found this way go through the same
+ * path as webhook events (system note, customer follow-up, escalation), so a
+ * change is never applied silently.
+ */
 export async function syncOrder(orderRowId: number) {
   const row = await db.omsOrder.findUniqueOrThrow({ where: { id: orderRowId } });
   const order = await getOrder(row.omsOrderId);
+  await applyStatusEvent(row.id, pollEvent(order), { source: "poll" });
   await db.omsOrder.update({
     where: { id: row.id },
     data: {
+      // GET is the current OMS state, so it also corrects a status that a
+      // webhook may not have delivered (applyStatusEvent ignores regressions).
       status: order.status,
       subtotal: order.subtotal,
       diskon: order.diskon,
@@ -240,47 +248,119 @@ export async function syncOrder(orderRowId: number) {
       nilaiCod: order.nilai_cod,
       segmen: order.segmen ?? null,
       itemsJson: JSON.stringify(order.items ?? []),
-      pengirimanJson: order.pengiriman ? JSON.stringify(order.pengiriman) : null,
+      ...(order.pengiriman ? { pengirimanJson: JSON.stringify(order.pengiriman) } : {}),
       lastPolledAt: new Date(),
-      // A fresh GET reflects OMS state at this moment; use it as a watermark so
-      // a delayed, older webhook event cannot regress the status.
-      lastEventAt: new Date(),
     },
   });
   return order;
 }
 
+/** A polled order expressed as a status event (no reason: polling cannot know it). */
+function pollEvent(order: Order): EventStatusOrder {
+  return {
+    event_id: `poll:${order.id}`,
+    jenis: "order.status_changed",
+    terjadi_at: new Date().toISOString(),
+    data: {
+      order_id: order.id,
+      nomor: order.nomor,
+      order_group_id: order.order_group_id,
+      status_sebelum: null,
+      status: order.status,
+      alasan: null,
+      kurir: order.pengiriman?.kurir ?? null,
+      resi: order.pengiriman?.resi ?? null,
+      percobaan_antar: order.pengiriman?.percobaan_antar ?? null,
+    },
+  };
+}
+
+/** Forward-only order of OMS statuses; the terminal states share the top rank. */
+const STATUS_RANK: Record<string, number> = {
+  baru: 0,
+  terverifikasi: 1,
+  di_gudang: 2,
+  dikirim: 3,
+  terkirim: 4,
+  batal: 4,
+  rts: 4,
+};
+
+/** True when `next` would move the order backwards (a late, out-of-order event). */
+export function isStatusRegression(current: string, next: string) {
+  const from = STATUS_RANK[current];
+  const to = STATUS_RANK[next];
+  return from !== undefined && to !== undefined && to < from;
+}
+
+const PROBLEM_REASONS = new Set(["gagal_antar", "cod_ditolak"]);
+
 function needsStaff(event: EventStatusOrder) {
   return (
     event.data.status === "rts" ||
     event.data.status === "batal" ||
-    event.data.alasan === "gagal_antar" ||
-    event.data.alasan === "cod_ditolak"
+    PROBLEM_REASONS.has(event.data.alasan ?? "")
   );
 }
 
-/** Applies one order.status_changed event (webhook). Older events are ignored. */
-export async function applyStatusEvent(orderRowId: number, event: EventStatusOrder) {
+function storedResi(pengirimanJson: string | null) {
+  if (!pengirimanJson) return null;
+  try {
+    return (JSON.parse(pengirimanJson) as Partial<Pengiriman>).resi || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Applies one order.status_changed event (webhook or poll).
+ * - Older or regressing events never change the stored status.
+ * - The status write is conditional (compare-and-set on status + watermark),
+ *   so concurrent deliveries of the same change notify the customer once.
+ * - A late problem event (gagal_antar, cod_ditolak) still alerts staff and the
+ *   customer even when a poll already moved the watermark past it.
+ */
+export async function applyStatusEvent(
+  orderRowId: number,
+  event: EventStatusOrder,
+  opts: { source?: "webhook" | "poll" } = {},
+) {
   const row = await db.omsOrder.findUniqueOrThrow({ where: { id: orderRowId } });
   const occurred = new Date(event.terjadi_at);
   if (Number.isNaN(occurred.getTime())) throw new Error("terjadi_at tidak valid.");
 
-  // Ordering is not guaranteed; an event older than the stored status is stale.
-  if (row.lastEventAt && occurred < row.lastEventAt) return { ignored: true as const };
+  const problem = PROBLEM_REASONS.has(event.data.alasan ?? "");
+  const stale = Boolean(row.lastEventAt && occurred <= row.lastEventAt);
+  const regression = isStatusRegression(row.status, event.data.status);
+  if ((stale || regression) && !(problem && opts.source !== "poll")) return { ignored: true as const };
 
-  const pengiriman = mergePengiriman(row.pengirimanJson, event);
-  await db.omsOrder.update({
-    where: { id: row.id },
-    data: {
-      status: event.data.status,
-      pengirimanJson: pengiriman ? JSON.stringify(pengiriman) : row.pengirimanJson,
-      lastEventAt: occurred,
-    },
-  });
+  const statusChanged = !stale && !regression && row.status !== event.data.status;
+  const resiNew = Boolean(event.data.resi) && event.data.resi !== storedResi(row.pengirimanJson);
+
+  if (!stale && !regression) {
+    const pengiriman = mergePengiriman(row.pengirimanJson, event);
+    const claimed = await db.omsOrder.updateMany({
+      where: {
+        id: row.id,
+        status: row.status,
+        OR: [{ lastEventAt: null }, { lastEventAt: { lt: occurred } }],
+      },
+      data: {
+        status: event.data.status,
+        pengirimanJson: pengiriman ? JSON.stringify(pengiriman) : row.pengirimanJson,
+        lastEventAt: occurred,
+      },
+    });
+    if (!claimed.count) return { ignored: true as const }; // another worker applied it
+  }
+
+  if (!statusChanged && !resiNew && !problem) return { updated: true as const, notified: false };
 
   await addSystemNote(
     row.conversationId,
-    `Status order ${row.nomor}: ${event.data.status}${event.data.alasan ? ` (${event.data.alasan})` : ""}.`,
+    `Status order ${row.nomor}: ${event.data.status}${event.data.alasan ? ` (${event.data.alasan})` : ""}${
+      opts.source === "poll" ? " (dari sinkronisasi OMS)" : ""
+    }.`,
   );
 
   const text = orderFollowupText(event);
@@ -315,7 +395,7 @@ export async function applyStatusEvent(orderRowId: number, event: EventStatusOrd
     }
   }
 
-  return { updated: true as const };
+  return { updated: true as const, notified: true };
 }
 
 /** Polling fallback while the OMS webhook is not active (max every 30 min per order). */

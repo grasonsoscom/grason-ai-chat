@@ -16,8 +16,16 @@ import {
   createOmsCheckout,
   markLeadFailed,
   refreshOmsOrder,
+  retryOmsCheckout,
   verifyOmsOrder,
 } from "@/app/(app)/pesan/actions";
+
+export type FailedCheckoutSummary = {
+  id: number;
+  createdAt: string;
+  lastError: string | null;
+  createdByAi: boolean;
+};
 
 export type OmsOrderSummary = {
   id: number;
@@ -57,6 +65,7 @@ type Props = {
   hasLead: boolean;
   leadStatus: string | null;
   handover: boolean;
+  failedCheckouts: FailedCheckoutSummary[];
   orders: OmsOrderSummary[];
 };
 
@@ -89,6 +98,7 @@ export function OmsOrderPanel({
   hasLead,
   leadStatus,
   handover,
+  failedCheckouts,
   orders,
 }: Props) {
   return (
@@ -136,6 +146,30 @@ export function OmsOrderPanel({
           )}
         </div>
       </div>
+
+      {failedCheckouts.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {failedCheckouts.map((c) => (
+            <div key={c.id} className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="red">Pesanan gagal</Badge>
+                  <span className="text-xs text-slate-600">
+                    {c.createdByAi ? "Dibuat AI" : "Dibuat staf"} · {new Date(c.createdAt).toLocaleString("id-ID")}
+                  </span>
+                </div>
+                <ActionButton action={retryOmsCheckout} fields={{ checkoutId: c.id }} className="btn btn-secondary text-xs">
+                  Coba ulang
+                </ActionButton>
+              </div>
+              {c.lastError && <p className="mt-1 text-xs text-red-700">{c.lastError}</p>}
+              <p className="mt-1 text-xs text-slate-500">
+                Coba ulang memakai ID pesanan yang sama, jadi tidak akan membuat order dobel di OMS.
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {orders.length > 0 && (
         <div className="mt-3 space-y-2">
@@ -226,6 +260,9 @@ function OmsCheckoutForm({
   const [provinsi, setProvinsi] = useState("");
   const [showOngkir, setShowOngkir] = useState(false);
   const [ongkirQuery, setOngkirQuery] = useState("");
+  // One id per opened form (the Modal remounts it): resubmits reuse it, so
+  // the server never creates a second OMS order from the same form.
+  const [nonce] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     let cancelled = false;
@@ -290,6 +327,7 @@ function OmsCheckoutForm({
   return (
     <ActionForm action={createOmsCheckout}>
       <input type="hidden" name="conversationId" value={conversationId} />
+      <input type="hidden" name="nonce" value={nonce} />
       <input type="hidden" name="items" value={JSON.stringify(payloadItems)} />
 
       <div className="mb-3 space-y-2">
@@ -497,6 +535,10 @@ function OmsCheckoutForm({
       <Field label="Catatan (opsional)">
         <input name="catatan" className="input" />
       </Field>
+      <label className="mb-3 flex items-start gap-2 text-sm text-slate-600">
+        <input type="checkbox" name="izinkan_duplikat" className="mt-1" />
+        <span>Ini order baru, walaupun item, penerima, dan alamatnya sama dengan order dalam 24 jam terakhir.</span>
+      </label>
 
       <SubmitButton>Buat order</SubmitButton>
     </ActionForm>

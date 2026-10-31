@@ -22,11 +22,26 @@ export async function enqueueOmsJob(kind: OmsJobKind, payload: unknown, opts: En
     return await db.omsOutbox.create({ data });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002" && opts.dedupeKey) {
+      // A dead-lettered job is revived on re-enqueue (e.g. "Coba ulang");
+      // pending/processing/done jobs make the enqueue a no-op.
+      await db.omsOutbox.updateMany({
+        where: { dedupeKey: opts.dedupeKey, status: "failed" },
+        data: { status: "pending", attempts: 0, lastError: null, payload: data.payload, nextAttemptAt: data.nextAttemptAt },
+      });
       const existing = await db.omsOutbox.findUnique({ where: { dedupeKey: opts.dedupeKey } });
       if (existing) return existing;
     }
     throw e;
   }
+}
+
+/**
+ * Queues (another) send of a checkout. The key is unique per attempt because a
+ * finished job (done after a definitive rejection) must not swallow a retry;
+ * duplicate sends are harmless since the checkout keeps its external_id.
+ */
+export function enqueueCheckoutSend(checkoutId: number) {
+  return enqueueOmsJob("create_order", { checkoutId }, { dedupeKey: `checkout:${checkoutId}:${Date.now()}` });
 }
 
 /** Retry delay after `attempts` failed tries: 2s, 4s, 8s, … capped at 1 hour. */

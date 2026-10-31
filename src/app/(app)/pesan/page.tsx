@@ -169,10 +169,16 @@ async function ConversationPanel({ id, isAdmin }: { id: number; isAdmin: boolean
     include: { customer: true, device: { include: { templates: true } }, messages: { orderBy: { createdAt: "asc" } } },
   });
   if (!conv) return <div className="p-6 text-sm text-slate-500">Percakapan tidak ditemukan.</div>;
-  const [staff, stages, omsOrders] = await Promise.all([
+  const [staff, stages, omsOrders, failedCheckouts] = await Promise.all([
     db.user.findMany({ where: { status: "active" }, select: { id: true, name: true } }),
     db.funnelStage.findMany({ orderBy: { number: "asc" } }),
     db.omsOrder.findMany({ where: { conversationId: id }, orderBy: { createdAt: "desc" }, take: 20 }),
+    db.omsCheckout.findMany({
+      where: { conversationId: id, status: "failed" },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: { id: true, createdAt: true, lastError: true, createdByAi: true },
+    }),
   ]);
   const inWindow = insideServiceWindow(conv.lastInboundAt);
   const defaultSegment = await customerSegment(conv.customerId);
@@ -222,6 +228,12 @@ async function ConversationPanel({ id, isAdmin }: { id: number; isAdmin: boolean
           hasLead={Boolean(conv.omsLeadId)}
           leadStatus={conv.omsLeadStatus}
           handover={Boolean(conv.omsHandoverAt)}
+          failedCheckouts={failedCheckouts.map((c) => ({
+            id: c.id,
+            createdAt: c.createdAt.toISOString(),
+            lastError: c.lastError,
+            createdByAi: c.createdByAi,
+          }))}
           orders={omsOrders.map((order) => ({
             id: order.id,
             nomor: order.nomor,

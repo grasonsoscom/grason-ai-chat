@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { after } from "next/server";
 import { db } from "@/lib/db";
 import { processOutbox } from "@/lib/oms/outbox";
-import { processOmsEvent, verifyOmsSignature } from "@/lib/oms/webhook";
+import { processStoredEvent, verifyOmsSignature } from "@/lib/oms/webhook";
 import type { EventStatusOrder } from "@/lib/oms/types";
 
 /**
@@ -33,8 +33,9 @@ export async function POST(req: Request) {
   const occurred = new Date(event.terjadi_at);
   if (Number.isNaN(occurred.getTime())) return new Response("Bad event", { status: 400 });
 
+  let stored;
   try {
-    await db.omsWebhookEvent.create({
+    stored = await db.omsWebhookEvent.create({
       data: { eventId: event.event_id, jenis: event.jenis, terjadiAt: occurred, payload: raw },
     });
   } catch (e) {
@@ -45,24 +46,12 @@ export async function POST(req: Request) {
     return new Response("Storage error", { status: 500 });
   }
 
+  // processStoredEvent claims the row, so a concurrent cron retry of the same
+  // event is skipped; failures stay on the row for the cron to retry.
   after(() =>
-    processOmsEvent(event)
-      .then(async () => {
-        await db.omsWebhookEvent.update({
-          where: { eventId: event.event_id },
-          data: { processedAt: new Date(), lastError: null },
-        });
-        await processOutbox();
-      })
-      .catch(async (e) => {
-        console.error("[oms] webhook processing failed:", (e as Error).message);
-        await db.omsWebhookEvent
-          .updateMany({
-            where: { eventId: event.event_id, processedAt: null },
-            data: { attempts: { increment: 1 }, lastError: (e as Error).message.slice(0, 1000) },
-          })
-          .catch(() => {});
-      }),
+    processStoredEvent(stored)
+      .then(() => processOutbox())
+      .catch((e) => console.error("[oms] webhook processing failed:", (e as Error).message)),
   );
 
   return new Response("OK", { status: 200 });

@@ -7,14 +7,16 @@ import { customerSegment } from "./promo";
 import { orderQuote, regionFromText, type OrderQuote, type Region, type Segment } from "./promo-quote";
 import { OmsApiError } from "./oms/client";
 import { friendlyOmsError } from "./oms/errors";
-import { checkoutExternalId, isRetryableStatus, normalizePhone } from "./oms/normalize";
+import { aiCheckoutExternalId, orderFingerprint } from "./oms/dedupe";
+import { isRetryableStatus, normalizePhone } from "./oms/normalize";
 import type { OmsCatalog } from "./oms/catalog";
 import { autoVerifyCheckout, submitCheckout } from "./oms/orders";
-import { enqueueOmsJob } from "./oms/queue";
+import { enqueueCheckoutSend } from "./oms/queue";
 import { processOutbox } from "./oms/outbox";
 import type { OrderBaru } from "./oms/types";
 import { addSystemNote } from "./outbound";
 import { db } from "./db";
+import { Prisma } from "@prisma/client";
 
 export type AiOrderDraft = {
   intent: "order" | "confirm" | "cancel" | "other";
@@ -289,23 +291,14 @@ export function buildOrderContext(plan: AutoOrderPlan, confirmed: boolean) {
   return lines.join("\n");
 }
 
-function sameOrder(a: OrderBaru, b: OrderBaru) {
-  return (
-    JSON.stringify(a.items) === JSON.stringify(b.items) &&
-    a.penerima.nama === b.penerima.nama &&
-    a.penerima.no_wa === b.penerima.no_wa &&
-    a.alamat.alamat === b.alamat.alamat &&
-    a.alamat.kota === b.alamat.kota &&
-    a.alamat.provinsi === b.alamat.provinsi &&
-    a.metode_bayar === b.metode_bayar
-  );
-}
-
 export type AutoOrderResult = {
   ok: boolean;
   duplicate?: boolean;
   queued?: boolean;
+  /** Staff-facing detail; never send it to the customer as-is. */
   message: string;
+  /** True when a system note with the detail was already written. */
+  noted?: boolean;
   checkoutId?: number;
 };
 
@@ -330,7 +323,7 @@ export async function createAutoOrder(input: {
   }
 
   const payload: OrderBaru = {
-    external_id: checkoutExternalId(conversationId),
+    external_id: "", // set below from the order fingerprint
     lead_id: "",
     metode_bayar: draft.metode_bayar || "cod",
     penerima: { nama: draft.nama, no_wa: noWa },
@@ -353,34 +346,41 @@ export async function createAutoOrder(input: {
     catatan: ["Dibuat otomatis oleh AI Agent.", draft.catatan].filter(Boolean).join(" "),
   };
 
-  // Retries/double "ya" must not create a second order, but a repeat purchase
-  // later is allowed.
-  const last = await db.omsCheckout.findFirst({
-    where: {
-      conversationId,
-      status: { in: ["pending", "created"] },
-      createdAt: { gt: new Date(Date.now() - 10 * 60_000) },
-    },
-    orderBy: { id: "desc" },
-  });
-  if (last) {
-    try {
-      if (sameOrder(JSON.parse(last.payload) as OrderBaru, payload)) {
-        return { ok: true, duplicate: true, checkoutId: last.id, message: "Pesanan ini sudah dibuat sebelumnya." };
-      }
-    } catch {
-      // A malformed old payload must not block a new order.
-    }
+  // The same cart, recipient and address on the same day always maps to one
+  // external_id: a repeated "ya", a re-run of the AI or two concurrent replies
+  // hit the unique key (and OMS is idempotent on it). A different cart, or the
+  // same cart on another day, is a new order.
+  payload.external_id = aiCheckoutExternalId(conversationId, orderFingerprint(payload));
+  const existing = await db.omsCheckout.findUnique({ where: { externalId: payload.external_id } });
+  if (existing && existing.status !== "failed") {
+    return { ok: true, duplicate: true, checkoutId: existing.id, message: "Pesanan ini sudah dibuat sebelumnya." };
   }
 
-  const row = await db.omsCheckout.create({
-    data: {
-      externalId: payload.external_id,
-      conversationId,
-      payload: JSON.stringify(payload),
-      createdByAi: true,
-    },
-  });
+  let row;
+  if (existing) {
+    // A failed attempt with the same id: retry it. OMS returns the existing
+    // order if an earlier attempt did reach it.
+    row = await db.omsCheckout.update({
+      where: { id: existing.id },
+      data: { status: "pending", lastError: null, payload: JSON.stringify(payload) },
+    });
+  } else {
+    try {
+      row = await db.omsCheckout.create({
+        data: {
+          externalId: payload.external_id,
+          conversationId,
+          payload: JSON.stringify(payload),
+          createdByAi: true,
+        },
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        return { ok: true, duplicate: true, message: "Pesanan ini sedang dibuat." };
+      }
+      throw e;
+    }
+  }
 
   try {
     const checkout = await submitCheckout(row.id);
@@ -400,9 +400,9 @@ export async function createAutoOrder(input: {
         data: { status: "failed", lastError: message },
       });
       await addSystemNote(conversationId, `Order otomatis AI ditolak: ${message}`);
-      return { ok: false, checkoutId: row.id, message };
+      return { ok: false, noted: true, checkoutId: row.id, message };
     }
-    await enqueueOmsJob("create_order", { checkoutId: row.id }, { dedupeKey: `checkout:${row.id}` });
+    await enqueueCheckoutSend(row.id);
     await processOutbox(10).catch((err) => console.error("[ai-order] outbox kick failed:", (err as Error).message));
     return {
       ok: true,

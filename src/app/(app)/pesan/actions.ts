@@ -1,5 +1,6 @@
 "use server";
 
+import { Prisma } from "@prisma/client";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/lib/auth";
@@ -16,10 +17,11 @@ import { getOmsCatalog } from "@/lib/oms/catalog";
 import { OmsApiError, omsConfigured } from "@/lib/oms/client";
 import { friendlyOmsError } from "@/lib/oms/errors";
 import { omsMarkFailed, omsOnHandover } from "@/lib/oms/lead";
-import { assertRupiah, checkoutExternalId, isRetryableStatus, isoUtc, normalizePhone } from "@/lib/oms/normalize";
+import { orderFingerprint, staffCheckoutExternalId, storedFingerprint } from "@/lib/oms/dedupe";
+import { assertRupiah, isRetryableStatus, isoUtc, normalizePhone } from "@/lib/oms/normalize";
 import { submitCheckout, submitVerification, syncOrder } from "@/lib/oms/orders";
 import { processOutbox } from "@/lib/oms/outbox";
-import { enqueueOmsJob } from "@/lib/oms/queue";
+import { enqueueCheckoutSend, enqueueOmsJob } from "@/lib/oms/queue";
 import type { ItemBaru, MetodeBayar, OrderBaru, Verifikasi } from "@/lib/oms/types";
 
 export async function sendMessage(_: ActionState, fd: FormData) {
@@ -158,6 +160,12 @@ async function assertStaffPricing(input: {
   return null;
 }
 
+function sameFormMessage(status: string) {
+  if (status === "created") return "Pesanan dari form ini sudah dibuat. Lihat daftar order.";
+  if (status === "failed") return "Pesanan dari form ini gagal. Gunakan tombol Coba ulang di daftar order.";
+  return "Pesanan dari form ini sedang diproses ke OMS.";
+}
+
 /** Staff-assisted checkout: one POST /orders for all items in the conversation. */
 export async function createOmsCheckout(_: ActionState, fd: FormData) {
   return run(async () => {
@@ -170,6 +178,13 @@ export async function createOmsCheckout(_: ActionState, fd: FormData) {
     const conversationId = Number(fd.get("conversationId"));
     const conv = await db.conversation.findUnique({ where: { id: conversationId }, include: { customer: true } });
     if (!conv) throw new Error("Percakapan tidak ditemukan.");
+
+    // One external_id per opened form: a double click or a resubmit after a
+    // slow/failed response reuses it, so OMS (idempotent on it) never gets a
+    // second order from the same form.
+    const externalId = staffCheckoutExternalId(conversationId, str(fd, "nonce"));
+    const sameForm = await db.omsCheckout.findUnique({ where: { externalId } });
+    if (sameForm) return sameFormMessage(sameForm.status);
 
     const pending = await db.omsCheckout.findFirst({
       where: { conversationId, status: "pending", createdAt: { gt: new Date(Date.now() - 10 * 60_000) } },
@@ -251,7 +266,7 @@ export async function createOmsCheckout(_: ActionState, fd: FormData) {
     if (quote.total < 0) throw new Error("Total order tidak boleh negatif.");
 
     const payload: OrderBaru = {
-      external_id: checkoutExternalId(conversationId),
+      external_id: externalId,
       lead_id: "", // filled by submitCheckout
       metode_bayar,
       penerima: { nama, no_wa },
@@ -274,15 +289,36 @@ export async function createOmsCheckout(_: ActionState, fd: FormData) {
       ...(catatan ? { catatan } : {}),
     };
 
-    const row = await db.omsCheckout.create({
-      data: { externalId: payload.external_id, conversationId, payload: JSON.stringify(payload) },
-    });
+    // A new form with the same cart, recipient and address as a recent order is
+    // most likely a duplicate; staff must tick "Ini order baru" to proceed.
+    if (fd.get("izinkan_duplikat") !== "on") {
+      const fingerprint = orderFingerprint(payload);
+      const recent = await db.omsCheckout.findMany({
+        where: { conversationId, status: { in: ["pending", "created"] }, createdAt: { gt: new Date(Date.now() - 24 * 3600_000) } },
+        select: { payload: true },
+      });
+      if (recent.some((r) => storedFingerprint(r.payload) === fingerprint)) {
+        throw new Error(
+          "Order dengan item, penerima, dan alamat yang sama sudah dibuat dalam 24 jam terakhir. Centang \"Ini order baru\" jika pelanggan memang memesan lagi.",
+        );
+      }
+    }
+
+    let row;
+    try {
+      row = await db.omsCheckout.create({
+        data: { externalId: payload.external_id, conversationId, payload: JSON.stringify(payload) },
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return sameFormMessage("pending");
+      throw e;
+    }
     if (ongkirNote) await addSystemNote(conversationId, `${ongkirNote} Diisi oleh ${me.name}.`);
 
     // If the lead is not created yet, let the outbox create it first instead
     // of blocking the UI on a slow/unreachable OMS.
     if (!conv.omsLeadId) {
-      await enqueueOmsJob("create_order", { checkoutId: row.id }, { dedupeKey: `checkout:${row.id}` });
+      await enqueueCheckoutSend(row.id);
       await addSystemNote(
         conversationId,
         "Pesanan sedang diproses ke OMS; lead dan nomor order akan dibuat otomatis.",
@@ -311,7 +347,7 @@ export async function createOmsCheckout(_: ActionState, fd: FormData) {
         throw new Error(message);
       }
       // Network/timeout/5xx: keep the order queued, never claim it was created.
-      await enqueueOmsJob("create_order", { checkoutId: row.id }, { dedupeKey: `checkout:${row.id}` });
+      await enqueueCheckoutSend(row.id);
       await addSystemNote(
         conversationId,
         "Pesanan sedang diproses ke OMS; nomor order akan muncul setelah OMS merespons.",
@@ -370,6 +406,30 @@ export async function verifyOmsOrder(_: ActionState, fd: FormData) {
       revalidatePath("/pesan");
       return "OMS belum merespons. Verifikasi disimpan di antrian dan akan dicoba ulang otomatis.";
     }
+  });
+}
+
+/**
+ * Re-sends a failed checkout with its original external_id. Safe when the
+ * earlier attempt timed out but did reach OMS: OMS returns that order instead
+ * of creating a second one.
+ */
+export async function retryOmsCheckout(_: ActionState, fd: FormData) {
+  return run(async () => {
+    const me = await requirePermission("pesan");
+    if (!omsConfigured()) throw new Error("OMS belum dikonfigurasi. Isi OMS_BASE_URL dan OMS_API_KEY.");
+    const checkoutId = Number(fd.get("checkoutId"));
+    const claimed = await db.omsCheckout.updateMany({
+      where: { id: checkoutId, status: "failed" },
+      data: { status: "pending", lastError: null },
+    });
+    if (!claimed.count) return "Pesanan ini sudah diproses atau sedang dicoba ulang.";
+    const row = await db.omsCheckout.findUniqueOrThrow({ where: { id: checkoutId } });
+    await addSystemNote(row.conversationId, `Pesanan dicoba ulang ke OMS oleh ${me.name}.`);
+    await enqueueCheckoutSend(row.id);
+    after(() => processOutbox().catch((e) => console.error("[oms] outbox kick failed:", (e as Error).message)));
+    revalidatePath("/pesan");
+    return "Pesanan dicoba ulang ke OMS. Nomor order muncul setelah OMS merespons.";
   });
 }
 

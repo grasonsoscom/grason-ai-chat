@@ -181,9 +181,12 @@ export async function aiRespond(conversationId: number): Promise<string> {
         try {
           const result = await createAutoOrder({ conversationId, plan: orderPlan });
           if (!result.ok) {
+            // result.message is staff-facing (may name OMS/API errors): keep it
+            // in a system note and send the customer a generic text.
+            if (!result.noted) await addSystemNote(conversationId, `Order otomatis AI tidak dibuat: ${result.message}`);
             await deliver(
               conversationId,
-              `Maaf, pesanan belum bisa dibuat otomatis: ${result.message} Staf kami akan membantu menyelesaikannya.`,
+              "Maaf, pesanan belum bisa dibuat otomatis. Staf kami akan membantu menyelesaikannya.",
               "ai",
             );
           }

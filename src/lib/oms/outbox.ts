@@ -194,7 +194,12 @@ async function writeFailureNote(kind: OmsJobKind, rawPayload: string, e: unknown
         where: { id: checkoutId },
         data: { status: "failed", lastError: message },
       });
-      await addSystemNote(row.conversationId, `Pembuatan order OMS gagal: ${message} Order belum dibuat.`);
+      // Timeouts/5xx: the order may or may not exist in OMS. Retrying is safe
+      // (same external_id), creating a new order from scratch is not.
+      await addSystemNote(
+        row.conversationId,
+        `Pembuatan order OMS gagal setelah beberapa percobaan: ${message} Status di OMS belum pasti; tekan "Coba ulang" (aman, tidak dobel) sebelum membuat order baru.`,
+      );
       return;
     }
     if (kind === "verify_order") {
