@@ -24,7 +24,7 @@ info:
       `terlalu_banyak_permintaan` dengan header `Retry-After` (detik).
     - Perubahan kontrak = file versi baru (`cs-ai.v4.yaml`).
 
-    **Beda dengan v2** (keputusan 0007): CS AI boleh membatalkan dan mengoreksi alamat
+    **Beda dengan v2** (keputusan 0008): CS AI boleh membatalkan dan mengoreksi alamat
     order miliknya selama order berstatus `baru` atau `terverifikasi` (belum diterima Ethix).
     - `POST /orders/{id}/batal` dengan `alasan`. Idempoten: order yang sudah batal
       dikembalikan 200 apa adanya. Status lain → 409 `tidak_bisa_dibatalkan`.

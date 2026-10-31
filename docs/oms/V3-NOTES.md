@@ -1,6 +1,6 @@
 # Catatan cs-ai.v3
 
-Kontrak aktif: `cs-ai.v3.yaml` (`OMS_BASE_URL=…/api/v3`). Keputusan OMS 0007.
+Kontrak aktif: `cs-ai.v3.yaml` (`OMS_BASE_URL=…/api/v3`). Keputusan OMS 0008.
 
 v3 = semua endpoint dan respons v2, ditambah:
 

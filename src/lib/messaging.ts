@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { alertAdmin } from "./alerts";
 import { cancelAiReply, randomDelaySec, scheduleAiReply } from "./ai-delay";
 import { sendTypingVia } from "./channel";
 import { customerSegment } from "./promo";
@@ -242,6 +243,8 @@ export async function aiRespond(conversationId: number): Promise<string> {
     return "replied";
   } catch (e) {
     await addSystemNote(conversationId, `AI tidak membalas: ${(e as Error).message}`);
+    // e.g. coins used up or the AI provider down: every customer goes unanswered.
+    await alertAdmin("ai-error", `AI berhenti membalas pelanggan: ${(e as Error).message}`);
     return "error";
   }
 }

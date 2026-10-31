@@ -1,6 +1,7 @@
 // Durable worker for OMS writes. The webhook routes and cron call this; server
 // actions can also kick it with after(). A failed job never loses customer data.
 import { db } from "../db";
+import { alertAdmin } from "../alerts";
 import { addSystemNote, deliver, deliverTemplate } from "../outbound";
 import { insideServiceWindow } from "../whatsapp";
 import { codReminderText } from "./messages";
@@ -126,6 +127,7 @@ async function runJob(kind: OmsJobKind, rawPayload: string) {
             row.conversationId,
             `Order OMS ditolak: ${friendlyOmsError(e)} Order belum dibuat.`,
           );
+          await alertAdmin("order-rejected", `Order OMS ditolak: ${friendlyOmsError(e)}\nCek menu Monitor Order.`);
           return; // handled definitively; do not retry
         }
         throw e;
@@ -236,6 +238,7 @@ async function sendCodReminder(orderId: number) {
 
 async function writeFailureNote(kind: OmsJobKind, rawPayload: string, e: unknown) {
   const message = friendlyOmsError(e);
+  await alertAdmin(`outbox:${kind}`, `Antrean OMS (${kind}) berhenti setelah beberapa percobaan: ${message}\nCek menu Monitor Order.`);
   try {
     if (kind === "create_lead" || kind === "patch_lead") {
       const { conversationId } = parsePayload<LeadJob>(rawPayload);

@@ -1,5 +1,6 @@
 // OMS -> CS AI webhook: signature verification and event processing.
 // The route must verify the raw body before parsing JSON.
+import { alertAdmin } from "../alerts";
 import { db } from "../db";
 import { getOrder } from "./client";
 import { applyStatusEvent, orderRowData } from "./orders";
@@ -71,6 +72,7 @@ export async function processStoredEvent(row: { id: number; attempts: number; pa
     await db.omsWebhookEvent.update({ where: { id: row.id }, data: { lastError: message } }).catch(() => {});
     if (row.attempts + 1 >= MAX_EVENT_ATTEMPTS) {
       console.error(`[oms] webhook event ${row.id} abandoned after ${MAX_EVENT_ATTEMPTS} attempts: ${message}`);
+      await alertAdmin("oms-event", `Status order dari OMS gagal diterapkan (5x): ${message}\nCek menu Monitor Order.`);
     }
     throw e;
   }

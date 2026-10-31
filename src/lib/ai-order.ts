@@ -15,6 +15,7 @@ import { enqueueCheckoutSend } from "./oms/queue";
 import { processOutbox } from "./oms/outbox";
 import type { OrderBaru } from "./oms/types";
 import { addSystemNote } from "./outbound";
+import { alertAdmin } from "./alerts";
 import { db } from "./db";
 import { Prisma } from "@prisma/client";
 
@@ -411,6 +412,7 @@ export async function createAutoOrder(input: {
         data: { status: "failed", lastError: message },
       });
       await addSystemNote(conversationId, `Order otomatis AI ditolak: ${message}`);
+      await alertAdmin("order-rejected", `Order otomatis AI ditolak OMS: ${message}\nCek menu Monitor Order.`);
       return { ok: false, noted: true, checkoutId: row.id, message };
     }
     await enqueueCheckoutSend(row.id);

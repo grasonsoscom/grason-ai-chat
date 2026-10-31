@@ -1,5 +1,5 @@
 // Cancel / address change requested by the buyer over WhatsApp (cs-ai.v3,
-// OMS decision 0007). Every change needs an explicit confirmation in chat.
+// OMS decision 0008). Every change needs an explicit confirmation in chat.
 //
 // The flow is stateless: each step is recognised from a marker phrase in the
 // previous AI message, and a not-yet-confirmed new address waits in a system
