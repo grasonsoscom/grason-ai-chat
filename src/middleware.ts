@@ -2,11 +2,21 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/session";
 
 // Webhooks and cron authenticate themselves (shared secret / Meta signature).
-const PUBLIC = ["/login", "/api/auth/google", "/api/webhooks/incoming", "/api/webhooks/whatsapp", "/api/cron"];
+const PUBLIC = [
+  "/login",
+  "/api/auth/google",
+  "/api/webhooks/incoming",
+  "/api/webhooks/whatsapp",
+  "/api/webhooks/oms",
+  "/api/cron",
+  // Token-authenticated REST API; each route calls authenticateApiToken().
+  "/api/v1",
+];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (PUBLIC.some((p) => pathname.startsWith(p))) return NextResponse.next();
+  const isPublic = PUBLIC.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  if (isPublic) return NextResponse.next();
   const uid = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);
   if (!uid) {
     if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

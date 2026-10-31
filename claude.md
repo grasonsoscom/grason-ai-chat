@@ -48,3 +48,7 @@ Ini penting karena teks di field **Deskripsi** AI Agent langsung memengaruhi bal
 
 - Pesan commit dan dokumentasi teknis dalam Bahasa Inggris. Teks yang dilihat pengguna dalam Bahasa Indonesia.
 - Ringkas. Hindari penjelasan yang tidak diminta.
+
+## Integrasi OMS GRASON
+
+Integrasi ke OMS GRASON wajib mengikuti docs/oms/INTEGRASI-OMS-GRASON.md, docs/oms/cs-ai.v2.yaml (kontrak aktif), dan docs/oms/V2-NOTES.md. cs-ai.v1.yaml disimpan sebagai referensi; endpoint aktif adalah /api/v2.

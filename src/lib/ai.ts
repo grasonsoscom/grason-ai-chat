@@ -1,16 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db";
+import { getAiConfig, type AiConfig } from "./ai-settings";
 import type { Segment } from "./promo";
 import { shippingContext } from "./shipping";
-
-const MODEL = "claude-opus-5-5";
+import { catalogPrompt, catalogUnavailablePrompt, getOmsCatalog } from "./oms/catalog";
+import { omsConfigured } from "./oms/client";
 
 export class AiNotConfiguredError extends Error {
   constructor() {
     super(
-      process.env.AI_PROVIDER === "openai"
-        ? "AI belum dikonfigurasi. Isi OPENAI_BASE_URL, OPENAI_API_KEY, dan OPENAI_MODEL di file .env lalu jalankan ulang server."
-        : "AI belum dikonfigurasi. Isi ANTHROPIC_API_KEY di file .env lalu jalankan ulang server.",
+      "AI belum dikonfigurasi. Buka Integrasi → AI / LLM di web untuk mengisi provider, model, dan API key, " +
+        "atau isi ANTHROPIC_API_KEY / OPENAI_API_KEY di .env.",
     );
   }
 }
@@ -43,7 +43,12 @@ function variantLine(v: { name: string; weight: number; price: number; salePrice
  * Builds the system prompt. The agent's Deskripsi is business configuration
  * written by the owner and is passed through verbatim.
  */
-export function buildSystemPrompt(agent: AgentWithContext, shipping?: string | null) {
+export function buildSystemPrompt(
+  agent: AgentWithContext,
+  shipping?: string | null,
+  omsCatalog?: string | null,
+  omsEnabled = false,
+) {
   const parts: string[] = [
     `Kamu adalah "${agent.name}", agen ${agent.baseLearning} untuk bisnis yang berjualan lewat WhatsApp.`,
     "Balas dalam Bahasa Indonesia, singkat dan cocok untuk chat WhatsApp (tanpa format markdown).",
@@ -54,13 +59,21 @@ export function buildSystemPrompt(agent: AgentWithContext, shipping?: string | n
   if (agent.products.length) {
     const list = agent.products
       .map((p) => {
-        const variants = p.variants.map((v) => `  - ${variantLine(v)}`).join("\n");
+        // With OMS the catalog is the only allowed price source, so local
+        // variant prices are omitted from the prompt.
+        const variants = omsEnabled
+          ? ""
+          : p.variants.map((v) => `  - ${variantLine(v)}`).join("\n");
         return [`* ${p.name}`, p.description && `  ${p.description}`, p.aiPrompt && `  Catatan: ${p.aiPrompt}`, variants]
           .filter(Boolean)
           .join("\n");
       })
       .join("\n");
-    parts.push(`Produk yang kamu tangani (jangan mengarang info di luar ini):\n${list}`);
+    parts.push(
+      omsEnabled
+        ? `Catatan produk dari pemilik bisnis (nama dan deskripsi saja; harga dan stok WAJIB memakai katalog OMS di bawah):\n${list}`
+        : `Produk yang kamu tangani (jangan mengarang info di luar ini):\n${list}`,
+    );
   }
   if (agent.funnel) {
     const stages = agent.funnel.levels.flatMap((l) => l.stages).sort((a, b) => a.number - b.number);
@@ -69,6 +82,15 @@ export function buildSystemPrompt(agent: AgentWithContext, shipping?: string | n
     );
   }
   if (shipping) parts.push(shipping);
+  if (omsEnabled) {
+    parts.push(omsCatalog ?? catalogUnavailablePrompt());
+    parts.push(
+      "Kamu tidak membuat pesanan sendiri. Jika pembeli siap membeli, minta nama penerima, alamat lengkap, " +
+        "dan konfirmasi metode bayar; lalu sampaikan staf akan membuatkan pesanan. " +
+        "Jangan pernah bilang pesanan sudah dibuat sebelum staf mengonfirmasi. " +
+        "Jangan menghitung total, diskon, atau nilai COD final; angka final berasal dari sistem order.",
+    );
+  }
   parts.push(
     "Jangan menjanjikan atau mengarang hal yang tidak tertulis di instruksi dan data produk di atas, " +
       "misalnya COD, ongkos kirim, area pengiriman, metode pembayaran, promo, diskon, atau stok. " +
@@ -86,15 +108,8 @@ function toMessages(turns: ChatTurn[]): Anthropic.Beta.BetaMessageParam[] {
   return trimmed.map((t) => ({ role: t.role, content: t.text }));
 }
 
-/** "openai" = any OpenAI-compatible /chat/completions endpoint; default is Claude. */
-function provider() {
-  return process.env.AI_PROVIDER === "openai" ? "openai" : "anthropic";
-}
-
-export function isAiConfigured() {
-  return provider() === "openai"
-    ? Boolean(process.env.OPENAI_BASE_URL && process.env.OPENAI_API_KEY && process.env.OPENAI_MODEL)
-    : Boolean(process.env.ANTHROPIC_API_KEY);
+export async function isAiConfigured() {
+  return Boolean(await getAiConfig());
 }
 
 /** `overrides` lets AI Response Test try unsaved Deskripsi/Kepribadian text. */
@@ -103,8 +118,10 @@ export async function generateReply(
   turns: ChatTurn[],
   overrides?: { description?: string; personality?: string },
   segment?: Segment,
+  options?: { extraContext?: string; skipShipping?: boolean },
 ) {
-  if (!isAiConfigured()) throw new AiNotConfiguredError();
+  const config = await getAiConfig();
+  if (!config) throw new AiNotConfiguredError();
   const loaded = await loadAgent(agentId);
   if (!loaded) throw new Error("AI Agent tidak ditemukan.");
   const agent = { ...loaded, ...Object.fromEntries(Object.entries(overrides ?? {}).filter(([, v]) => v !== undefined)) };
@@ -113,8 +130,41 @@ export async function generateReply(
   // Package prices the customer pays, for the COD breakdown in the shipping section.
   const items = agent.products.flatMap((p) =>
     p.variants.map((v) => ({ name: agent.products.length > 1 ? `${p.name} ${v.name}` : v.name, price: v.salePrice ?? v.price })));
-  const system = buildSystemPrompt(agent, await shippingContext(turns, { items, segment }));
-  return provider() === "openai" ? callOpenAiCompatible(system, messages) : callClaude(system, messages);
+
+  const omsEnabled = omsConfigured();
+  const [shipping, catalog] = await Promise.all([
+    options?.skipShipping
+      ? Promise.resolve(null)
+      : shippingContext(turns, { items, segment }),
+    omsEnabled ? getOmsCatalog() : Promise.resolve(null),
+  ]);
+  const system = [
+    buildSystemPrompt(
+      agent,
+      shipping,
+      omsEnabled ? (catalog ? catalogPrompt(catalog) : catalogUnavailablePrompt()) : null,
+      omsEnabled,
+    ),
+    options?.extraContext?.trim(),
+  ].filter(Boolean).join("\n\n");
+  return config.provider === "openai"
+    ? callOpenAiCompatible(system, messages, config)
+    : callClaude(system, messages, config);
+}
+
+/** One-off text generation for internal tasks (order extraction), not a customer reply. */
+export async function generateText(
+  system: string,
+  turns: ChatTurn[],
+  options: { maxTokens?: number; temperature?: number } = {},
+) {
+  const config = await getAiConfig();
+  if (!config) throw new AiNotConfiguredError();
+  const messages = toMessages(turns);
+  if (!messages.length) throw new Error("Belum ada pesan untuk diproses.");
+  return config.provider === "openai"
+    ? callOpenAiCompatible(system, messages, config, options)
+    : callClaude(system, messages, config, options);
 }
 
 type ChatCompletion = {
@@ -122,22 +172,28 @@ type ChatCompletion = {
   error?: { message?: string };
 };
 
-async function callOpenAiCompatible(system: string, messages: Anthropic.Beta.BetaMessageParam[]) {
-  const base = process.env.OPENAI_BASE_URL!.replace(/\/+$/, "");
+async function callOpenAiCompatible(
+  system: string,
+  messages: Anthropic.Beta.BetaMessageParam[],
+  config: AiConfig,
+  options: { maxTokens?: number; temperature?: number } = {},
+) {
+  const base = config.baseUrl.replace(/\/+$/, "");
   let res: Response;
   try {
     res = await fetch(`${base}/chat/completions`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL,
-        max_tokens: 2048,
+        model: config.model,
+        max_tokens: options.maxTokens ?? 2048,
+        ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
         messages: [{ role: "system", content: system }, ...messages.map((m) => ({ role: m.role, content: m.content as string }))],
       }),
       signal: AbortSignal.timeout(60_000),
     });
   } catch {
-    throw new Error("Tidak dapat terhubung ke server AI. Cek OPENAI_BASE_URL atau koneksi internet.");
+    throw new Error("Tidak dapat terhubung ke server AI. Cek base URL AI di Integrasi → AI / LLM atau koneksi internet.");
   }
   const json = (await res.json().catch(() => ({}))) as ChatCompletion;
   if (res.status === 401 || res.status === 403) throw new Error("API key AI tidak valid.");
@@ -149,12 +205,18 @@ async function callOpenAiCompatible(system: string, messages: Anthropic.Beta.Bet
   return text;
 }
 
-async function callClaude(system: string, messages: Anthropic.Beta.BetaMessageParam[]) {
-  const client = new Anthropic();
+async function callClaude(
+  system: string,
+  messages: Anthropic.Beta.BetaMessageParam[],
+  config: AiConfig,
+  options: { maxTokens?: number; temperature?: number } = {},
+) {
+  const client = new Anthropic({ apiKey: config.apiKey });
   try {
     const response = await client.beta.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
+      model: config.model,
+      max_tokens: options.maxTokens ?? 16000,
+      ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
       system,
       messages,
       output_config: { effort: "low" },

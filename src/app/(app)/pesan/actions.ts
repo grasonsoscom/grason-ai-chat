@@ -1,10 +1,24 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { optId, required, run, str, type ActionState } from "@/lib/action";
 import { aiRespond, recordInbound, sendStaffMessage, sendTemplateMessage } from "@/lib/messaging";
+import { addSystemNote } from "@/lib/outbound";
+import { formatIDR } from "@/lib/format";
+import { emitWebhook } from "@/lib/webhook";
+import { customerSegment, orderQuote, regionFromText, type Segment } from "@/lib/promo";
+import { getOmsCatalog } from "@/lib/oms/catalog";
+import { OmsApiError, omsConfigured } from "@/lib/oms/client";
+import { friendlyOmsError } from "@/lib/oms/errors";
+import { omsMarkFailed, omsOnHandover } from "@/lib/oms/lead";
+import { assertRupiah, checkoutExternalId, isRetryableStatus, isoUtc, normalizePhone } from "@/lib/oms/normalize";
+import { submitCheckout, submitVerification, syncOrder } from "@/lib/oms/orders";
+import { processOutbox } from "@/lib/oms/outbox";
+import { enqueueOmsJob } from "@/lib/oms/queue";
+import type { ItemBaru, MetodeBayar, OrderBaru, Verifikasi } from "@/lib/oms/types";
 
 export async function sendMessage(_: ActionState, fd: FormData) {
   return run(async () => {
@@ -32,6 +46,19 @@ export async function updateConversation(_: ActionState, fd: FormData) {
       data: { mode, assignedToId: optId(fd, "assignedToId"), ...(before.mode !== mode ? { modeChangedAt: new Date() } : {}) },
     });
     await db.customer.update({ where: { id: conv.customerId }, data: { stageId: optId(fd, "stageId") } });
+    await emitWebhook("conversation.status_changed", {
+      conversation_id: id,
+      mode: conv.mode,
+      assigned_to_id: conv.assignedToId,
+    });
+
+    if (mode !== "ai") {
+      await omsOnHandover(id, mode === "eskalasi" ? "Percakapan dieskalasi ke staf" : "Percakapan ditangani staf");
+      after(() => processOutbox().catch((e) => console.error("[oms] outbox kick failed:", (e as Error).message)));
+    } else if (conv.omsHandoverAt) {
+      await addSystemNote(id, "Percakapan kembali ke AI, tetapi handover di OMS tetap berlaku dan tidak bisa dibatalkan.");
+    }
+
     revalidatePath("/pesan");
     return "Percakapan diperbarui.";
   });
@@ -63,6 +90,7 @@ export async function simulateInbound(_: ActionState, fd: FormData) {
       text: required(fd, "text", "Pesan"),
       deviceId: optId(fd, "deviceId"),
     });
+    after(() => processOutbox().catch((e) => console.error("[oms] outbox kick failed:", (e as Error).message)));
     revalidatePath("/pesan");
     return "Pesan masuk disimulasikan.";
   });
@@ -79,10 +107,252 @@ export async function setAiMode(conversationId: number, on: boolean): Promise<{ 
       await db.message.create({
         data: { conversationId, direction: "out", sender: "system", status: "sent", text: on ? `Agen AI dinyalakan oleh ${me.name}.` : `Agen AI dimatikan oleh ${me.name}. Staf membalas manual.` },
       });
+      await emitWebhook("conversation.status_changed", {
+        conversation_id: conversationId,
+        mode,
+        assigned_to_id: conv.assignedToId,
+      });
+      if (!on) {
+        await omsOnHandover(conversationId, "Agen AI dimatikan; staf membalas manual");
+        after(() => processOutbox().catch((e) => console.error("[oms] outbox kick failed:", (e as Error).message)));
+      } else if (conv.omsHandoverAt) {
+        await addSystemNote(conversationId, "Agen AI dinyalakan kembali, tetapi handover di OMS tetap berlaku dan tidak bisa dibatalkan.");
+      }
     }
     revalidatePath("/pesan");
     return {};
   } catch (e) {
     return { error: (e as Error).message || "Gagal mengubah Agen AI." };
   }
+}
+/** Staff-assisted checkout: one POST /orders for all items in the conversation. */
+export async function createOmsCheckout(_: ActionState, fd: FormData) {
+  return run(async () => {
+    await requireUser();
+    if (!omsConfigured()) throw new Error("OMS belum dikonfigurasi. Isi OMS_BASE_URL dan OMS_API_KEY.");
+
+    const conversationId = Number(fd.get("conversationId"));
+    const conv = await db.conversation.findUnique({ where: { id: conversationId }, include: { customer: true } });
+    if (!conv) throw new Error("Percakapan tidak ditemukan.");
+
+    const pending = await db.omsCheckout.findFirst({
+      where: { conversationId, status: "pending", createdAt: { gt: new Date(Date.now() - 10 * 60_000) } },
+    });
+    if (pending) throw new Error("Pesanan sebelumnya masih diproses. Tunggu sebentar atau cek daftar order.");
+
+    let parsedItems: unknown;
+    try {
+      parsedItems = JSON.parse(str(fd, "items"));
+    } catch {
+      throw new Error("Daftar item tidak valid.");
+    }
+    if (!Array.isArray(parsedItems) || parsedItems.length < 1 || parsedItems.length > 20) {
+      throw new Error("Pilih 1–20 item.");
+    }
+    const items: ItemBaru[] = parsedItems.map((row) => {
+      const r = row as { sku?: unknown; qty?: unknown };
+      const sku = typeof r.sku === "string" ? r.sku.trim() : "";
+      const qty = Number(r.qty);
+      if (!sku) throw new Error("SKU wajib diisi.");
+      if (!Number.isInteger(qty) || qty < 1 || qty > 100) throw new Error("Jumlah per item harus 1–100.");
+      return { sku, qty };
+    });
+    if (new Set(items.map((item) => item.sku)).size !== items.length) {
+      throw new Error("SKU tidak boleh duplikat.");
+    }
+
+    const metode = str(fd, "metode_bayar");
+    if (metode !== "cod" && metode !== "transfer") throw new Error("Metode bayar tidak valid.");
+    const metode_bayar = metode as MetodeBayar;
+
+    const nama = required(fd, "nama", "Nama penerima");
+    const no_wa = normalizePhone(required(fd, "no_wa", "Nomor WA penerima"));
+    const alamat = required(fd, "alamat", "Alamat");
+    const kota = required(fd, "kota", "Kota");
+    const provinsi = required(fd, "provinsi", "Provinsi");
+    const kelurahan = str(fd, "kelurahan");
+    const kecamatan = str(fd, "kecamatan");
+    const kode_pos = str(fd, "kode_pos");
+    const catatan = str(fd, "catatan");
+    if (kode_pos && !/^\d{5}$/.test(kode_pos)) throw new Error("Kode pos harus 5 digit.");
+
+    const ongkir = Number(fd.get("ongkir") ?? 0);
+    const diskon = Number(fd.get("diskon") ?? 0);
+    assertRupiah(ongkir, "Ongkir");
+    assertRupiah(diskon, "Diskon");
+
+    // OMS v2: the CS AI must send the total and COD breakdown; OMS validates it
+    // against its own active prices (GET /prices).
+    const catalog = await getOmsCatalog();
+    if (!catalog) throw new Error("Katalog OMS tidak tersedia. Coba lagi sebelum membuat order.");
+    const priceBySku = new Map(catalog.prices.map((price) => [price.sku, price]));
+    let subtotal = 0;
+    for (const item of items) {
+      const price = priceBySku.get(item.sku);
+      if (!price) throw new Error(`SKU ${item.sku} tidak ditemukan di katalog OMS.`);
+      subtotal += price.harga_jual * item.qty;
+    }
+    if (diskon > subtotal) throw new Error("Diskon tidak boleh melebihi subtotal.");
+
+    const segmenInput = str(fd, "segmen");
+    const segmen: Segment =
+      segmenInput === "nc" || segmenInput === "ro" || segmenInput === "reseller"
+        ? segmenInput
+        : await customerSegment(conv.customerId);
+    const region = regionFromText(provinsi) ?? "luar";
+    const quote = orderQuote({
+      subtotal,
+      ongkir,
+      diskon,
+      metode: metode_bayar,
+      segment: segmen,
+      region,
+    });
+    if (quote.total < 0) throw new Error("Total order tidak boleh negatif.");
+
+    const payload: OrderBaru = {
+      external_id: checkoutExternalId(conversationId),
+      lead_id: "", // filled by submitCheckout
+      metode_bayar,
+      penerima: { nama, no_wa },
+      alamat: {
+        alamat,
+        ...(kelurahan ? { kelurahan } : {}),
+        ...(kecamatan ? { kecamatan } : {}),
+        kota,
+        provinsi,
+        ...(kode_pos ? { kode_pos } : {}),
+      },
+      items,
+      ongkir,
+      diskon,
+      subsidi_ongkir: quote.shippingSubsidy,
+      biaya_cod: quote.codFee,
+      subsidi_admin_cod: quote.adminSubsidy,
+      total: quote.total,
+      segmen,
+      ...(catatan ? { catatan } : {}),
+    };
+
+    const row = await db.omsCheckout.create({
+      data: { externalId: payload.external_id, conversationId, payload: JSON.stringify(payload) },
+    });
+
+    // If the lead is not created yet, let the outbox create it first instead
+    // of blocking the UI on a slow/unreachable OMS.
+    if (!conv.omsLeadId) {
+      await enqueueOmsJob("create_order", { checkoutId: row.id }, { dedupeKey: `checkout:${row.id}` });
+      await addSystemNote(
+        conversationId,
+        "Pesanan sedang diproses ke OMS; lead dan nomor order akan dibuat otomatis.",
+      );
+      after(() => processOutbox().catch((e) => console.error("[oms] outbox kick failed:", (e as Error).message)));
+      revalidatePath("/pesan");
+      return "Lead OMS belum siap. Pesanan disimpan di antrian dan akan diproses otomatis.";
+    }
+
+    try {
+      const checkout = await submitCheckout(row.id);
+      after(() => processOutbox().catch((e) => console.error("[oms] outbox kick failed:", (e as Error).message)));
+      revalidatePath("/pesan");
+      if (!checkout) return "Pesanan sudah tercatat.";
+      return `Pesanan dibuat: ${checkout.orders
+        .map((order) => `${order.nomor} (${formatIDR(order.total)})`)
+        .join(", ")}.`;
+    } catch (e) {
+      if (e instanceof OmsApiError && !isRetryableStatus(e.status)) {
+        const message = friendlyOmsError(e);
+        await db.omsCheckout.update({
+          where: { id: row.id },
+          data: { status: "failed", lastError: message },
+        });
+        await addSystemNote(conversationId, `Order OMS ditolak: ${message} Order belum dibuat.`);
+        throw new Error(message);
+      }
+      // Network/timeout/5xx: keep the order queued, never claim it was created.
+      await enqueueOmsJob("create_order", { checkoutId: row.id }, { dedupeKey: `checkout:${row.id}` });
+      await addSystemNote(
+        conversationId,
+        "Pesanan sedang diproses ke OMS; nomor order akan muncul setelah OMS merespons.",
+      );
+      after(() => processOutbox().catch((err) => console.error("[oms] outbox kick failed:", (err as Error).message)));
+      revalidatePath("/pesan");
+      return "OMS belum merespons. Pesanan disimpan di antrian dan akan dicoba ulang otomatis.";
+    }
+  });
+}
+
+/** Verifies one order after the buyer confirms address, COD amount, and willingness to pay. */
+export async function verifyOmsOrder(_: ActionState, fd: FormData) {
+  return run(async () => {
+    await requireUser();
+    if (!omsConfigured()) throw new Error("OMS belum dikonfigurasi. Isi OMS_BASE_URL dan OMS_API_KEY.");
+
+    const orderId = Number(fd.get("orderId"));
+    const order = await db.omsOrder.findUnique({ where: { id: orderId } });
+    if (!order) throw new Error("Order tidak ditemukan.");
+    if (order.status !== "baru") throw new Error(`Order sudah berstatus ${order.status}; tidak perlu verifikasi.`);
+    if (order.perluVerifikasiManusia) {
+      throw new Error("Order ini perlu verifikasi CS manusia (riwayat RTS).");
+    }
+    if (fd.get("konfirmasi") !== "on") {
+      throw new Error("Centang konfirmasi bahwa pembeli sudah setuju dengan alamat dan nilai COD.");
+    }
+
+    const input: Verifikasi = {
+      dikonfirmasi_at: isoUtc(),
+      // Must match the OMS order exactly; 0 for transfer.
+      nilai_cod_dikonfirmasi: order.nilaiCod,
+      ...(str(fd, "catatan") ? { catatan: str(fd, "catatan") } : {}),
+    };
+
+    try {
+      const updated = await submitVerification(order.id, input);
+      revalidatePath("/pesan");
+      return `Order ${order.nomor} terverifikasi (status ${updated.status}).`;
+    } catch (e) {
+      if (e instanceof OmsApiError && e.kode === "perlu_verifikasi_manusia") {
+        await db.conversation.update({ where: { id: order.conversationId }, data: { mode: "eskalasi" } });
+        await omsOnHandover(order.conversationId, "Verifikasi OMS meminta CS manusia (riwayat RTS)");
+        after(() => processOutbox().catch((err) => console.error("[oms] outbox kick failed:", (err as Error).message)));
+        throw new Error(friendlyOmsError(e));
+      }
+      if (e instanceof OmsApiError && !isRetryableStatus(e.status)) throw new Error(friendlyOmsError(e));
+
+      await enqueueOmsJob(
+        "verify_order",
+        { orderId: order.id, input },
+        { dedupeKey: `verify:${order.id}:${input.dikonfirmasi_at}` },
+      );
+      await addSystemNote(order.conversationId, `Verifikasi order ${order.nomor} sedang diproses ulang ke OMS.`);
+      after(() => processOutbox().catch((err) => console.error("[oms] outbox kick failed:", (err as Error).message)));
+      revalidatePath("/pesan");
+      return "OMS belum merespons. Verifikasi disimpan di antrian dan akan dicoba ulang otomatis.";
+    }
+  });
+}
+
+export async function refreshOmsOrder(_: ActionState, fd: FormData) {
+  return run(async () => {
+    await requireUser();
+    const orderId = Number(fd.get("orderId"));
+    try {
+      const order = await syncOrder(orderId);
+      revalidatePath("/pesan");
+      return `Status ${order.nomor}: ${order.status}.`;
+    } catch (e) {
+      throw new Error(friendlyOmsError(e));
+    }
+  });
+}
+
+export async function markLeadFailed(_: ActionState, fd: FormData) {
+  return run(async () => {
+    await requireUser();
+    const conversationId = Number(fd.get("conversationId"));
+    await omsMarkFailed(conversationId);
+    after(() => processOutbox().catch((e) => console.error("[oms] outbox kick failed:", (e as Error).message)));
+    revalidatePath("/pesan");
+    return "Lead ditandai gagal di OMS.";
+  });
 }

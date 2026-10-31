@@ -2,6 +2,7 @@
 import { db } from "./db";
 import type { ChatTurn } from "./ai";
 import { SEGMENT_LABEL, codQuote, minOrder, regionFromText, type Region, type Segment } from "./promo";
+import { rajaQuoteByText, type OngkirQuote } from "./ongkir-quote";
 
 type Rate = { warehouse: string; city: string; district: string; price: number };
 
@@ -95,6 +96,32 @@ function scan(text: string, index: Index) {
   return { districts, cities };
 }
 
+const STOP_WORDS = new Set([
+  "ongkir", "ongkos", "kirim", "pengiriman", "ekspedisi", "kurir", "berapa", "brp", "ya", "kak", "min",
+  "gan", "bang", "mas", "mbak", "pak", "bu", "dari", "untuk", "pakai", "jne", "jnt", "sicepat", "cod",
+  "transfer", "estimasi", "hari", "sampai", "dong", "nih", "sih", "nya", "sana", "sini", "situ", "tempat",
+]);
+
+/** Best-effort destination keyword from "ongkir ke Bandung" / "saya di Surabaya". */
+export function guessDestinationQuery(text: string) {
+  const postal = text.match(/\b(\d{5})\b/);
+  const patterns = [
+    /\b(?:ongkir|ongkos|kirim|pengiriman|ekspedisi)\s+(?:ke|untuk|tujuan)\s+([A-Za-z][A-Za-z .'-]{2,50})/i,
+    /\b(?:ke|di|tujuan|alamat|sampai)\s+([A-Za-z][A-Za-z .'-]{2,50})/i,
+  ];
+  for (const re of patterns) {
+    const match = text.match(re);
+    if (!match) continue;
+    const words = match[1]
+      .replace(/[.,!?].*$/, "")
+      .split(/\s+/)
+      .filter((w) => w && !STOP_WORDS.has(w.toLowerCase()));
+    const query = words.slice(0, 4).join(" ").trim().toLowerCase();
+    if (query.length >= 3) return postal ? `${query} ${postal[1]}` : query;
+  }
+  return postal?.[1] ?? "";
+}
+
 const rp = (n: number) => `Rp${n.toLocaleString("id-ID")}`;
 
 /**
@@ -121,14 +148,41 @@ function codLines(ongkir: number, items: PricedItem[], segment: Segment, region:
   return out;
 }
 
-export async function shippingContext(turns: ChatTurn[], opts: { items?: PricedItem[]; segment?: Segment } = {}) {
+export async function shippingContext(
+  turns: ChatTurn[],
+  opts: { items?: PricedItem[]; segment?: Segment; weightGrams?: number } = {},
+) {
   const recent = turns.slice(-6);
   if (!recent.some((t) => INTENT.test(t.text))) return null;
-  const index = await loadIndex();
-  if (!index) return null;
 
   const customer = recent.filter((t) => t.role === "user").slice(-3).map((t) => t.text);
   const text = customer.join(" \n ");
+  const items = opts.items ?? [];
+  const segment = opts.segment ?? "nc";
+  const region = regionFromText(text);
+  const cod = (ongkir: number) => (items.length ? codLines(ongkir, items, segment, region) : []);
+  const livePrompt = (quote: OngkirQuote) => {
+    const weight = quote.weight.toLocaleString("id-ID");
+    return [
+      `Data ongkir real-time dari RajaOngkir (berat paket default ${weight} gram). Angka ini boleh kamu sampaikan apa adanya; jangan mengubah atau mengarang tarif lain:`,
+      `- Tujuan: ${quote.destination}`,
+      `  ${quote.courier} ${quote.service}: ${rp(quote.cost)} untuk berat ${weight} gram${quote.etd ? `, estimasi ${quote.etd}` : ""}.`,
+      ...cod(quote.cost),
+      "Cara menyampaikan: sebutkan kurir, layanan, tarif, dan estimasi hanya jika tertera di data di atas. Jangan menawarkan kurir atau layanan lain. " +
+        "Subsidi ongkir dan subsidi admin COD hanya untuk pembayaran COD; untuk Transfer, total = harga paket + ongkir. " +
+        "Kalau ada Rincian COD di atas, pakai angkanya apa adanya (jangan hitung ulang) dan sebutkan rinciannya. " +
+        (region ? "" : "Pilih rincian sesuai provinsi alamat pelanggan (Pulau Jawa: Banten, DKI Jakarta, Jawa Barat, Jawa Tengah, DI Yogyakarta, Jawa Timur)."),
+    ].join("\n");
+  };
+
+  const index = await loadIndex();
+  if (!index) {
+    // No J&T workbook imported: still answer from RajaOngkir when possible.
+    const query = guessDestinationQuery(customer[customer.length - 1] ?? "");
+    const quote = query ? await rajaQuoteByText(query, opts.weightGrams) : null;
+    return quote ? livePrompt(quote) : null;
+  }
+
   // The newest message naming a place wins ("kalau ke jogja?" replaces an earlier Sukajadi).
   // Older messages only fill in the kab/kota for a kecamatan named on its own.
   const scans = customer.map((t) => scan(t, index)).reverse();
@@ -146,10 +200,20 @@ export async function shippingContext(turns: ChatTurn[], opts: { items?: PricedI
   const inCity = matches.filter((m) => mentionedCities.has(m.city));
   if (inCity.length) matches = inCity;
 
-  const items = opts.items ?? [];
-  const segment = opts.segment ?? "nc";
-  const region = regionFromText(text);
-  const cod = (ongkir: number) => (items.length ? codLines(ongkir, items, segment, region) : []);
+  // Live RajaOngkir quote wins when the destination is unambiguous.
+  const latestText = customer[customer.length - 1] ?? "";
+  const rajaQuery =
+    matches.length === 1
+      ? `${districtKey(matches[0].district)} ${matches[0].city}`
+      : mentionedCities.size === 1
+        ? [...mentionedCities][0]
+        : !matches.length && !mentionedCities.size
+          ? guessDestinationQuery(latestText)
+          : "";
+  if (rajaQuery) {
+    const quote = await rajaQuoteByText(rajaQuery, opts.weightGrams);
+    if (quote) return livePrompt(quote);
+  }
 
   const lines: string[] = [];
   if (matches.length && matches.length <= 6) {

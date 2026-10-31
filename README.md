@@ -46,6 +46,108 @@ Open http://localhost:3000 and sign in with email + password (test logins in `pr
 - COD pricing (`src/lib/promo.ts`): COD fee 3% of (package price + shipping); shipping subsidy (NC: Jawa up to 25.000, outside Jawa 25.000 if shipping >= 50.000 else 50%; RO: Jawa up to 30.000, outside Jawa up to 50.000; none for resellers) and a 5.000 COD admin subsidy apply only to COD orders whose package price + shipping reaches the minimum (120.000, resellers 200.000). The breakdown per package is computed in code and added to the AI prompt. Customer type is set in Pelanggan, or automatic: RO if the customer first chatted more than 7 days ago. Jawa vs outside Jawa comes from the province in the address.
 - Short kecamatan names that are everyday words ("Baru", "Kamu") only match after "kec"/"kecamatan".
 
+### OMS GRASON (leads, orders, verification, stock, prices)
+
+Contract: **`docs/oms/cs-ai.v2.yaml`** (active, `/api/v2`); `docs/oms/cs-ai.v1.yaml` is kept as
+reference and `docs/oms/V2-NOTES.md` records the delta. Every call goes through
+`src/lib/oms/client.ts`; no other module calls the OMS API or touches its database.
+
+- **Config**: `OMS_BASE_URL` (including `/api/v2`), `OMS_API_KEY`, `OMS_WEBHOOK_SECRET`. One key per
+  environment; staging and production keys are different.
+- **v2 totals**: `POST /orders` sends `total` plus `subsidi_ongkir`, `biaya_cod`,
+  `subsidi_admin_cod`, and `segmen`. OMS re-checks the total against its active `/prices`; a mismatch
+  returns `422 total_tidak_cocok`. The checkout form shows the same breakdown before submitting.
+- **Lead lifecycle**: the first inbound message enqueues `POST /leads` with
+  `external_id = conv_<conversationId>`. The first outgoing AI/staff/template message PATCHes
+  `respon_pertama_at` + `direspon`; auto-follow-ups PATCH `follow_up`; switching a conversation to
+  staff/escalation (or an RTS order) PATCHes `handover`. `closing` is never sent via PATCH — OMS fills
+  it automatically when an order is created.
+- **Catalog**: prices and stock come from `GET /prices` and `GET /stock`, cached for at most 5 minutes.
+  AI prompts never contain a permanent SKU/price list; local product prices are omitted when OMS is on.
+- **Checkout (staff-assisted)**: in **Pesan**, open a conversation → **Buat Order OMS**. Items use the
+  OMS catalog and one `POST /orders` is sent. A mixed SSR/FHI checkout produces two orders; the buyer
+  summary lists every order number and COD amount. Network failures keep the checkout in
+  `OmsOutbox` and retry with the same `external_id`.
+- **Verification**: **Verifikasi order** sends `POST /orders/{id}/verifikasi` with the exact OMS
+  `nilai_cod` (0 for transfer). An RTS customer gets `422 perlu_verifikasi_manusia`; the conversation
+  is escalated and handed over to staff.
+- **Status updates**: `POST /api/webhooks/oms` verifies `X-Oms-Signature` (HMAC-SHA256 over
+  `<X-Oms-Timestamp>.<raw body>`), dedupes `event_id`, and acknowledges immediately. Until OMS
+  activates the webhook, `/api/cron/oms` polls open orders at most every 30 minutes.
+- **Cron**: `GET /api/cron/oms` (Vercel Cron with `CRON_SECRET`) or `POST` with
+  `x-webhook-secret`. It drains the outbox, retries unprocessed webhook events, and polls orders.
+  For 15-minute polling, use an external scheduler.
+- **Tests**: `npm test` (Vitest) covers request shapes, retries, error mapping, phone normalization,
+  and webhook signatures using an OMS mock derived from the OpenAPI contract.
+- **Manual smoke**: start `node scripts/oms-mock-server.mjs`, then run `scripts/oms-smoke.ts`
+  (lead → mixed checkout → verification). `scripts/oms-webhook-smoke.ts` sends a signed
+  `order.status_changed` event to a running app and checks the status update and customer follow-up.
+- **Staging**: OMS currently holds dummy data. Do not send real customer phone numbers or addresses.
+
+### RajaOngkir (cek ongkir)
+
+Live domestic shipping costs from the RajaOngkir (Komerce) Shipping Cost API.
+
+- **Config**: **Integrasi → Cek Ongkir RajaOngkir**. Paste the Shipping Cost API key, search and pick the
+  warehouse origin (subdistrict), choose a default courier code (`jne`, `jnt`, `sicepat`, …), and set the
+  default package weight in grams. The key is stored encrypted (same AES-256-GCM box as the AI key).
+  `RAJAONGKIR_*` environment variables are only a fallback.
+- **Cek Ongkir page** (`/ongkir`): search a destination by kecamatan/kota/kode pos, enter weight and courier,
+  and see every service with cost and ETD.
+- **Checkout**: in **Pesan → Buat Order OMS**, the Ongkir field has **Cek ongkir (RajaOngkir)**. It pre-fills
+  the destination from the address fields; picking a service fills `ongkir`, which then feeds the COD quote
+  and the OMS `total`.
+- **API**: `POST /api/rajaongkir/destinations` (session required) and `POST /api/rajaongkir/cost`.
+  The AI Agent still answers from the J&T Excel rates; RajaOngkir is used by staff-facing screens.
+- **Docs**: <https://rajaongkir.com/docs/shipping-cost/getting_started/endpoint>.
+
+### AI order automation
+
+**AI Agent → Perilaku AI → Order Otomatis** lets the agent run the whole order flow:
+
+1. Extract products, recipient, address, and payment method from the conversation. Product names are
+   mapped to the live OMS catalog SKUs.
+2. Quote shipping with RajaOngkir (J&T Excel as fallback) and calculate the COD breakdown with the same
+   `orderQuote` rules as the staff checkout.
+3. Ask the customer to confirm the exact total. An order is created only after an explicit yes following
+   a message that contains the total, so a stray "ok" cannot create an order.
+4. Create the OMS checkout with `createdByAi`, send the buyer summary, and optionally auto-verify the COD
+   with `POST /orders/{id}/verifikasi`. Orders flagged `perlu_verifikasi_manusia` are never auto-verified.
+5. A second identical confirmation within 10 minutes is treated as a retry, not a new order. Stock and
+   price are re-checked against OMS before sending.
+
+Requirements: OMS configured, AI provider configured, and either RajaOngkir configured or J&T rates
+imported. Auto-order is off by default per agent; auto-verify is an additional separate toggle.
+Use these toggles on staging first: auto-verify removes the staff confirmation step.
+
+- **Smoke test**: `scripts/ai-order-smoke.ts` runs three turns (product → address → "ya") against the OMS
+  mock and a scripted OpenAI-compatible mock (`scripts/ai-mock-server.mjs`), then asserts that the order was
+  created and auto-verified.
+
+## Developer API (REST v1)
+
+- **Tokens**: Admin → **Developer → API Tokens**. Plaintext tokens are shown once and stored only as
+  SHA-256 hashes. Format: `gro_<prefix>_<secret>`; send
+  `Authorization: Bearer <token>` (or `X-Api-Key`).
+- **Base URL**: `<APP_URL>/api/v1` (set `APP_URL` in production; docs fall back to localhost).
+- **Scopes**: `*`, `contacts:read/write`, `conversations:read`, `messages:write`,
+  `campaigns:read/write`, `webhooks:write`, `ai:read/write`, `analytics:read`, `wallet:read`.
+- **Endpoints**: `/me`, `/tokens`, `/contacts`, `/segments`, `/campaigns`, `/messages/send`,
+  `/conversations`, `/webhooks`, `/ai/chatbots`, `/wallet`, `/analytics/summary`. Lists use
+  `?page=` and return `meta.current_page/last_page/total` plus `links.next`.
+- **Rate limits**: 60 requests/minute per token, in-memory per server instance. HTTP 429 includes
+  `Retry-After`.
+- **Campaigns** map to the existing Broadcast module. A campaign stores `template_ids` (not free
+  text); launch is synchronous and supports pause between recipients. Contacts with
+  `opt_in_whatsapp = false` are skipped.
+- **Outbound webhooks**: **Developer → Webhooks**. Each delivery is a JSON POST with
+  `X-Webhook-Event` and `X-Webhook-Signature: t=<unix>,v1=<hmac>` (HMAC-SHA256 of
+  `t + "." + raw body` with the endpoint secret). Deliveries are logged on the page; automatic
+  retries are not implemented yet.
+- **Docs**: `/developer/api-docs` (all staff) and `/api/v1/openapi.json` (public).
+- **Not available yet**: social publishing, automations, mobile agent endpoints, rule-based
+  segments, and a media library. The workspace is single-tenant: every token sees the same data.
+
 ## Deploying to Vercel
 
 Local dev stays on SQLite; Vercel uses PostgreSQL. `npm run vercel-build` (set in `vercel.json`) writes `prisma/postgres.prisma` from `schema.prisma` with a `postgresql` datasource, runs `prisma db push` and the seed, then `next build`.
@@ -62,16 +164,21 @@ Local dev stays on SQLite; Vercel uses PostgreSQL. `npm run vercel-build` (set i
 
 | Variable | Purpose |
 |---|---|
-| `ANTHROPIC_API_KEY` | AI Agent replies and AI Response Test (model `claude-opus-5-5`). Without it, AI shows a "belum dikonfigurasi" note. |
+| `AI_PROVIDER`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | Fallback AI configuration. The same values can be set in **Integrasi → AI / LLM**; settings saved there win over `.env` and the API key is stored encrypted (AES-256-GCM keyed by `AUTH_SECRET`). |
+| `ANTHROPIC_API_KEY` | Fallback Claude key for AI Agent replies and AI Response Test (model `claude-opus-5-5`). Without a key in `.env` or Integrasi, AI shows a "belum dikonfigurasi" note. |
 | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp Cloud API sending. Without them, outgoing messages are stored as `simulated`. |
 | `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` | Cloud API webhook verification and signature check. Without the app secret, the webhook rejects every POST. |
 | `INCOMING_WEBHOOK_SECRET` | Required header `x-webhook-secret` for `POST /api/webhooks/incoming` and `POST /api/cron/followup`. |
+| `OMS_BASE_URL`, `OMS_API_KEY` | OMS GRASON API base URL (including `/api/v2`) and API key. Without them, OMS features show as not configured. |
+| `OMS_WEBHOOK_SECRET` | Verifies `X-Oms-Signature` on `POST /api/webhooks/oms`. |
+| `RAJAONGKIR_API_KEY`, `RAJAONGKIR_ORIGIN_ID`, `RAJAONGKIR_ORIGIN_LABEL`, `RAJAONGKIR_COURIER`, `RAJAONGKIR_WEIGHT` | Fallback RajaOngkir settings. Configure them in **Integrasi → Cek Ongkir RajaOngkir** instead; web settings override env. |
 | `COIN_COST_AI_REPLY`, `COIN_COST_BROADCAST_MESSAGE` | Coin cost per action. **TBD**, default 0. Balance is checked before the action runs whenever cost > 0. |
 
 ## Structure
 
 - `prisma/schema.prisma`: data model (account and coins, staff/roles/groups, devices/templates, customers/conversations/messages, products, funnels/labels, audiences, broadcasts, AI agents, calendar).
 - `src/lib/`: domain logic (`messaging.ts` inbound/AI/24h window/follow-up, `ai.ts` Claude prompt, `coins.ts`, `funnel.ts` renumbering, `whatsapp.ts`, `webhook.ts`, `uploads.ts`).
+- `src/lib/oms/`: OMS client, catalog cache, lead lifecycle, durable outbox, checkout/verification, and webhook processing.
 - `src/app/(app)/<module>/`: one page + `actions.ts` per module.
 - `src/app/api/`: incoming webhook, follow-up cron, uploaded images, sample CSV.
 

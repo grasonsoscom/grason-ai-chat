@@ -1,8 +1,12 @@
 import Link from "next/link";
 import type { Prisma } from "@prisma/client";
 import { ActionButton, ActionForm, Modal, SubmitButton } from "@/components/forms";
+import { OmsOrderPanel } from "@/components/oms-order-panel";
 import { Badge, Field } from "@/components/ui";
 import { db } from "@/lib/db";
+import { omsConfigured } from "@/lib/oms/client";
+import { getRajaOngkirStatus } from "@/lib/rajaongkir";
+import { customerSegment } from "@/lib/promo";
 import { formatTime, timeAgo } from "@/lib/format";
 import { HUB_API_TYPE, insideServiceWindow, isConfigured } from "@/lib/whatsapp";
 import { requestAiReply, sendMessage, simulateInbound, updateConversation } from "./actions";
@@ -161,11 +165,14 @@ async function ConversationPanel({ id }: { id: number }) {
     include: { customer: true, device: { include: { templates: true } }, messages: { orderBy: { createdAt: "asc" } } },
   });
   if (!conv) return <div className="p-6 text-sm text-slate-500">Percakapan tidak ditemukan.</div>;
-  const [staff, stages] = await Promise.all([
+  const [staff, stages, omsOrders] = await Promise.all([
     db.user.findMany({ where: { status: "active" }, select: { id: true, name: true } }),
     db.funnelStage.findMany({ orderBy: { number: "asc" } }),
+    db.omsOrder.findMany({ where: { conversationId: id }, orderBy: { createdAt: "desc" }, take: 20 }),
   ]);
   const inWindow = insideServiceWindow(conv.lastInboundAt);
+  const defaultSegment = await customerSegment(conv.customerId);
+  const raja = await getRajaOngkirStatus();
 
   return (
     <>
@@ -199,6 +206,36 @@ async function ConversationPanel({ id }: { id: number }) {
           </select>
           <SubmitButton variant="secondary">Simpan</SubmitButton>
         </ActionForm>
+
+        <OmsOrderPanel
+          conversationId={id}
+          customerName={conv.customer.name}
+          customerPhone={conv.customer.phone}
+          defaultSegment={defaultSegment}
+          rajaOngkir={{ enabled: raja.configured, originLabel: raja.originLabel, courier: raja.courier, weight: raja.weight }}
+          configured={omsConfigured()}
+          hasLead={Boolean(conv.omsLeadId)}
+          leadStatus={conv.omsLeadStatus}
+          handover={Boolean(conv.omsHandoverAt)}
+          orders={omsOrders.map((order) => ({
+            id: order.id,
+            nomor: order.nomor,
+            status: order.status,
+            metodeBayar: order.metodeBayar,
+            entitas: order.entitas,
+            subtotal: order.subtotal,
+            diskon: order.diskon,
+            ongkir: order.ongkir,
+            subsidiOngkir: order.subsidiOngkir,
+            biayaCod: order.biayaCod,
+            subsidiAdminCod: order.subsidiAdminCod,
+            total: order.total,
+            nilaiCod: order.nilaiCod,
+            segmen: order.segmen,
+            perluVerifikasiManusia: order.perluVerifikasiManusia,
+            createdAt: order.createdAt.toISOString(),
+          }))}
+        />
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto bg-slate-50 p-4">

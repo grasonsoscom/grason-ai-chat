@@ -1,4 +1,5 @@
 import { after } from "next/server";
+import { processOutbox } from "@/lib/oms/outbox";
 import { handleWebhook, verifySignature, type WebhookPayload } from "@/lib/wa-cloud";
 
 /** Meta's one-time subscription check when the callback URL is saved in the App Dashboard. */
@@ -30,6 +31,10 @@ export async function POST(req: Request) {
   } catch {
     return new Response("Bad JSON", { status: 400 });
   }
-  after(() => handleWebhook(payload).catch((e) => console.error("[wa-cloud] webhook failed:", (e as Error).message)));
+  after(() =>
+    handleWebhook(payload)
+      .then(() => processOutbox())
+      .catch((e) => console.error("[wa-cloud] webhook failed:", (e as Error).message)),
+  );
   return new Response("EVENT_RECEIVED", { status: 200 });
 }

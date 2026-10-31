@@ -1,17 +1,12 @@
-import { db } from "./db";
+// Outgoing webhook entry point. Delivery details live in src/lib/webhooks/.
+// Kept as a thin wrapper so existing call sites do not import the dispatcher.
+import { dispatchWebhook } from "./webhooks/dispatch";
 
-/** Fire-and-forget POST to the configured outgoing webhook. Never throws. */
+/** Fire-and-forget semantics: never throws into the messaging path. */
 export async function emitWebhook(event: string, data: Record<string, unknown>) {
-  const acc = await db.account.findUnique({ where: { id: 1 } });
-  if (!acc?.webhookEnabled || !acc.webhookUrl) return;
   try {
-    await fetch(acc.webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event, data, sentAt: new Date().toISOString() }),
-      signal: AbortSignal.timeout(5000),
-    });
+    await dispatchWebhook(event, data);
   } catch (e) {
-    console.error(`[webhook] failed to deliver ${event}:`, (e as Error).message);
+    console.error(`[webhook] failed to dispatch ${event}:`, (e as Error).message);
   }
 }

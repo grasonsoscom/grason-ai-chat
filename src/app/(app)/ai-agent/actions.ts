@@ -67,6 +67,11 @@ export async function saveAgent(_: ActionState, fd: FormData) {
         data = { followupEnabled: on("followupEnabled"), followupDelayHours: hours, followupMessage: str(fd, "followupMessage") };
         break;
       }
+      case "order": {
+        const autoOrder = on("autoOrder");
+        data = { autoOrder, autoVerifyOrders: autoOrder && on("autoVerifyOrders") };
+        break;
+      }
       case "integrasi":
         data = { webhookOnReply: on("webhookOnReply") };
         break;

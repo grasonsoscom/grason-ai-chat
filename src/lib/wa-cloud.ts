@@ -4,6 +4,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { db } from "./db";
 import { recordInbound } from "./messaging";
+import { emitWebhook } from "./webhook";
 import { HUB_API_TYPE, markRead } from "./whatsapp";
 
 /** Checks X-Hub-Signature-256 (HMAC-SHA256 of the raw body with the app secret). */
@@ -14,6 +15,17 @@ export function verifySignature(rawBody: string, header: string | null) {
   const got = Buffer.from(header.slice("sha256=".length));
   return expected.length === got.length && timingSafeEqual(expected, got);
 }
+
+/** Click-to-WhatsApp attribution. Meta sends the ad id as referral.source_id. */
+type WaReferral = {
+  source_url?: string;
+  source_id?: string;
+  source_type?: string;
+  headline?: string;
+  body?: string;
+  media_type?: string;
+  ctwa_clid?: string;
+};
 
 type WaMessage = {
   from: string;
@@ -26,6 +38,7 @@ type WaMessage = {
   video?: { caption?: string };
   document?: { caption?: string; filename?: string };
   location?: { name?: string; address?: string };
+  referral?: WaReferral;
 };
 
 type WaStatus = { id: string; status: "sent" | "delivered" | "read" | "failed"; errors?: { code?: number; title?: string }[] };
@@ -82,13 +95,30 @@ async function applyStatus(s: WaStatus) {
         text: `Pesan gagal terkirim${err?.title ? `: ${err.title}` : ""}${err?.code ? ` (kode ${err.code})` : ""}.`,
       },
     });
+    await emitWebhook("message.status", {
+      message_id: msg.id,
+      conversation_id: msg.conversationId,
+      external_id: s.id,
+      status: "failed",
+    });
     return;
   }
   // Receipts arrive out of order and are processed concurrently, so the
   // "only move forward" rule is part of the UPDATE itself (read never -> delivered).
   const rank = RANK[s.status] ?? 0;
   const lower = Object.keys(RANK).filter((k) => RANK[k] < rank);
-  await db.message.updateMany({ where: { id: msg.id, status: { in: lower } }, data: { status: s.status } });
+  const updated = await db.message.updateMany({
+    where: { id: msg.id, status: { in: lower } },
+    data: { status: s.status },
+  });
+  if (updated.count > 0) {
+    await emitWebhook("message.status", {
+      message_id: msg.id,
+      conversation_id: msg.conversationId,
+      external_id: s.id,
+      status: s.status,
+    });
+  }
 }
 
 /** Processes one webhook delivery. Errors are logged per item so one bad item can't block the rest. */
@@ -112,7 +142,22 @@ export async function handleWebhook(payload: WebhookPayload) {
         const name = v.contacts?.find((c) => c.wa_id === m.from)?.profile?.name;
         try {
           await markRead(m.id, device.phoneNumberId);
-          await recordInbound({ phone: `+${m.from}`, name, text, deviceId: device.id, externalId: m.id });
+          await recordInbound({
+            phone: `+${m.from}`,
+            name,
+            text,
+            deviceId: device.id,
+            externalId: m.id,
+            attribution: m.referral
+              ? {
+                  kanal: "click_to_whatsapp",
+                  campaign_id: null,
+                  adset_id: null,
+                  ad_id: m.referral.source_id ?? null,
+                  referral: m.referral,
+                }
+              : undefined,
+          });
         } catch (e) {
           console.error("[wa-cloud] inbound message failed:", (e as Error).message);
         }

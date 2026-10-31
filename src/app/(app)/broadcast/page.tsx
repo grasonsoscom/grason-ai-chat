@@ -51,7 +51,14 @@ export default async function BroadcastPage() {
       <Modal trigger="Buat Broadcast Series" title="Buat Broadcast Series" triggerClass="btn btn-secondary"><BroadcastForm type="Series" {...opts} /></Modal>
     </>
   );
-  const tone = { Draft: "slate", Terkirim: "green", Sebagian: "amber", Gagal: "red" } as const;
+  const tone = {
+    Draft: "slate",
+    Mengirim: "blue",
+    Dijeda: "amber",
+    Terkirim: "green",
+    Sebagian: "amber",
+    Gagal: "red",
+  } as const;
 
   return (
     <div>
@@ -67,7 +74,7 @@ export default async function BroadcastPage() {
             return (
               <tr key={b.id}>
                 <td className="whitespace-nowrap px-4 py-3">
-                  {b.status === "Draft" && (
+                  {["Draft", "Dijeda", "Sebagian", "Gagal"].includes(b.status) && (
                     <ActionButton action={sendBroadcast} fields={{ id: b.id }} className="btn btn-primary px-3 py-1 text-xs"
                       confirm={`Kirim ke ${recipients} pelanggan (${recipients * msgs} pesan${cost ? `, ${cost.toLocaleString("id-ID")} koin` : ""})?`}>Kirim</ActionButton>
                   )}

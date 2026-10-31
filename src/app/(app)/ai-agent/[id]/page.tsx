@@ -12,6 +12,7 @@ const BEHAVIOR = [
   { key: "kepribadian", label: "Kepribadian AI" },
   { key: "produk", label: "Produk" },
   { key: "pengaturan", label: "Pengaturan AI" },
+  { key: "order", label: "Order Otomatis" },
   { key: "eskalasi", label: "Pengaturan Eskalasi" },
 ];
 
@@ -75,6 +76,38 @@ export default async function AgentDetailPage({ params, searchParams }: { params
       <Section section="pengaturan">
         <label className="mb-4 flex items-center gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={agent.active} /> Agen aktif (membalas pesan otomatis)</label>
         <Field label="Panjang balasan maksimal (karakter)"><input name="maxReplyChars" type="number" min={50} max={4000} defaultValue={agent.maxReplyChars} className="input max-w-40" /></Field>
+      </Section>
+    );
+    else if (sub === "order") body = (
+      <Section section="order">
+        <label className="mb-3 flex items-start gap-2 text-sm">
+          <input type="checkbox" name="autoOrder" defaultChecked={agent.autoOrder} className="mt-1" />
+          <span>
+            <span className="font-medium">Aktifkan order otomatis</span>
+            <span className="block text-xs text-slate-500">
+              AI mengumpulkan produk, nama, alamat, dan metode bayar; menghitung ongkir; meminta konfirmasi pelanggan;
+              lalu membuat order OMS. Katalog OMS dan ongkir RajaOngkir harus sudah dikonfigurasi.
+            </span>
+          </span>
+        </label>
+        <label className="mb-3 flex items-start gap-2 text-sm">
+          <input type="checkbox" name="autoVerifyOrders" defaultChecked={agent.autoVerifyOrders} className="mt-1" />
+          <span>
+            <span className="font-medium">Verifikasi order otomatis</span>
+            <span className="block text-xs text-slate-500">
+              Setelah order dibuat, sistem mengirim verifikasi COD ke OMS tanpa staf. Order yang ditandai perlu
+              verifikasi manusia (riwayat RTS) tetap dieskalasi.
+            </span>
+          </span>
+        </label>
+        <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Gunakan order otomatis hanya setelah alur dan harga diuji di staging. Pelanggan bisa membuat order tanpa
+          persetujuan staf, jadi pastikan ongkir dan katalog OMS sudah benar.
+        </div>
+        <p className="mt-3 text-xs text-slate-500">
+          Untuk mencoba alurnya, buka <Link href="/pesan" className="text-green-700 underline">Pesan → Simulasi Pesan Masuk</Link>{" "}
+          lalu kirim pesan sebagai pelanggan: sebutkan produk, lengkapi nama/alamat, dan balas YA saat diminta.
+        </p>
       </Section>
     );
     else if (sub === "eskalasi") body = (

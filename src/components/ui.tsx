@@ -28,6 +28,15 @@ export function EmptyState({ title, description, action }: { title: string; desc
   );
 }
 
+export function AccessDenied({ message = "Halaman ini hanya dapat diakses oleh Admin." }: { message?: string }) {
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">
+      <p className="font-medium">Akses ditolak</p>
+      <p className="mt-1">{message}</p>
+    </div>
+  );
+}
+
 export function Badge({ children, tone = "slate" }: { children: ReactNode; tone?: "slate" | "green" | "blue" | "amber" | "red" | "purple" }) {
   const tones = {
     slate: "bg-slate-100 text-slate-700", green: "bg-green-100 text-green-700", blue: "bg-blue-100 text-blue-700",

@@ -1,0 +1,11 @@
+chat.167.71.166.171.nip.io {
+	reverse_proxy 127.0.0.1:3000
+}
+
+oms.167.71.166.171.nip.io {
+	reverse_proxy 127.0.0.1:3002
+}
+
+oms-api.167.71.166.171.nip.io {
+	reverse_proxy 127.0.0.1:3001
+}

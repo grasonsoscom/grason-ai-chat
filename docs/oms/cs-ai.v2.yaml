@@ -1,0 +1,945 @@
+openapi: 3.1.0
+info:
+  title: OMS GRASON – Kontrak SaaS CS AI (v2)
+  version: 2.0.0
+  description: |
+    Kontrak antara SaaS CS AI GRASON dan OMS GRASON.
+
+    **Arah SaaS CS AI → OMS:** buat & update lead, buat order, verifikasi order,
+    baca status order, stok tersedia, dan harga aktif.
+    **Arah OMS → SaaS CS AI:** webhook `order.status_changed`.
+
+    Aturan umum:
+    - Autentikasi dengan API key sistem `cs_ai` (header `Authorization: Bearer gok_…`
+      atau `X-Api-Key`). Kunci dibuat Orkestrator; scope: `lead.tulis`, `order.tulis`,
+      `order.baca`, `stok.baca`, `harga.baca`.
+    - Uang = integer rupiah. Waktu = ISO-8601 UTC (`2026-10-28T07:05:00Z`).
+    - Nomor WA boleh `08…`, `+62…`, atau `62…`; OMS menyimpannya sebagai `628…`.
+    - Idempotensi: `external_id` adalah ID di sistem CS AI dan unik per jenis data.
+      Kiriman ulang dengan `external_id` sama mengembalikan data yang sudah ada
+      (HTTP 200), tidak membuat data baru.
+    - Satu checkout boleh berisi produk entitas SSR dan FHI. OMS memecahnya menjadi
+      satu order per entitas dalam satu `order_group_id`.
+    - Rate limit 60 permintaan per menit per API key. Lewat batas: 429
+      `terlalu_banyak_permintaan` dengan header `Retry-After` (detik).
+    - Perubahan yang tidak kompatibel = file versi baru (`cs-ai.v3.yaml`).
+
+    **Beda dengan v1** (keputusan 0006): aturan harga COD mengikuti GrasOn AI Chat.
+    - `POST /orders` wajib membawa `total` hasil hitungan CS AI, beserta rinciannya:
+      `subsidi_ongkir`, `biaya_cod`, `subsidi_admin_cod`, dan `segmen`. OMS tidak
+      menghitung ulang subsidi; OMS hanya memeriksa
+      `total = subtotal − diskon + ongkir − subsidi_ongkir + biaya_cod − subsidi_admin_cod`
+      dengan subtotal dari harga aktif OMS (`GET /prices`). `nilai_cod` = `total`.
+    - Lead dan order membawa `segmen` (`nc`, `ro`, `reseller`), opsional.
+    - Respons order memuat rincian yang sama. v1 tetap berlaku tanpa rincian ini.
+    - Status: draft, menunggu review tim GrasOn AI Chat.
+servers:
+  - url: https://oms.grason.example/api/v2
+    description: Produksi (alamat final menyusul)
+  - url: http://localhost:3001/api/v2
+    description: Lokal
+security:
+  - bearerApiKey: []
+  - headerApiKey: []
+tags:
+  - name: Lead
+    description: Lead dari click-to-WhatsApp atau landing page, beserta atribusi iklan.
+  - name: Order
+    description: Order (checkout) yang dibuat dari lead.
+  - name: Katalog
+    description: Stok tersedia dan harga aktif sebelum CS AI menawarkan.
+paths:
+  /leads:
+    post:
+      tags: [Lead]
+      operationId: buatLead
+      summary: Buat lead baru
+      description: |
+        Dipanggil saat percakapan baru masuk. ID iklan dari click-to-WhatsApp atau UTM
+        landing page (lewat ADV AI) dibawa di sini; ini dasar ROAS dan kinerja CS.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeadBaru'
+      responses:
+        '201':
+          description: Lead dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+        '200':
+          description: Lead dengan `external_id` ini sudah ada; data yang ada dikembalikan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+        '400':
+          $ref: '#/components/responses/ValidasiGagal'
+        '401':
+          $ref: '#/components/responses/TidakTerautentikasi'
+        '429':
+          $ref: '#/components/responses/TerlaluBanyak'
+        '403':
+          $ref: '#/components/responses/TidakDiizinkan'
+  /leads/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdLead'
+    get:
+      tags: [Lead]
+      operationId: ambilLead
+      summary: Ambil lead
+      responses:
+        '200':
+          description: Lead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+        '401':
+          $ref: '#/components/responses/TidakTerautentikasi'
+        '429':
+          $ref: '#/components/responses/TerlaluBanyak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+    patch:
+      tags: [Lead]
+      operationId: ubahLead
+      summary: Update status lead, respon pertama, atau handover ke CS manusia
+      description: |
+        Hanya field yang dikirim yang diubah. `respon_pertama_at` hanya diisi sekali;
+        kiriman berikutnya diabaikan. Handover tidak bisa dibatalkan lewat API ini.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UbahLead'
+      responses:
+        '200':
+          description: Lead setelah diubah.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+        '400':
+          $ref: '#/components/responses/ValidasiGagal'
+        '401':
+          $ref: '#/components/responses/TidakTerautentikasi'
+        '429':
+          $ref: '#/components/responses/TerlaluBanyak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+        '409':
+          $ref: '#/components/responses/Konflik'
+  /orders:
+    post:
+      tags: [Order]
+      operationId: buatOrder
+      summary: Buat order (checkout) dari lead
+      description: |
+        Satu permintaan = satu checkout. Bila item berisi produk SSR dan FHI, OMS
+        membuat dua order dalam satu grup. Item paket (mis. isi 2) diterima apa adanya;
+        OMS mengirimnya ke Ethix sebagai SKU komponen.
+
+        Order ditolak (422) bila stok tersedia tidak cukup atau SKU tidak dikenal.
+        Order dari pelanggan bertanda riwayat RTS tetap dibuat, tetapi verifikasinya
+        wajib oleh CS manusia (`perlu_verifikasi_manusia: true`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderBaru'
+      responses:
+        '201':
+          description: Checkout dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Checkout'
+        '200':
+          description: Checkout dengan `external_id` ini sudah ada; data yang ada dikembalikan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Checkout'
+        '400':
+          $ref: '#/components/responses/ValidasiGagal'
+        '401':
+          $ref: '#/components/responses/TidakTerautentikasi'
+        '429':
+          $ref: '#/components/responses/TerlaluBanyak'
+        '403':
+          $ref: '#/components/responses/TidakDiizinkan'
+        '404':
+          description: Lead tidak ditemukan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Galat'
+        '422':
+          description: |
+            Order tidak dapat diproses. `error.kode`: `stok_tidak_cukup` (detail berisi SKU
+            dan stok tersedia), `sku_tidak_dikenal`, `produk_nonaktif`,
+            `rincian_tidak_valid` (mis. subsidi ongkir melebihi ongkir, biaya COD pada
+            transfer), atau `total_tidak_cocok` (detail berisi hitungan OMS; biasanya harga
+            di CS AI berbeda dengan `GET /prices`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Galat'
+              example:
+                error:
+                  kode: stok_tidak_cukup
+                  pesan: Stok tidak cukup
+                  detail:
+                    - sku: KKT-01
+                      diminta: 3
+                      tersedia: 1
+  /orders/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdOrder'
+    get:
+      tags: [Order]
+      operationId: ambilOrder
+      summary: Status order, resi, dan posisi kiriman
+      responses:
+        '200':
+          description: Order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/TidakTerautentikasi'
+        '429':
+          $ref: '#/components/responses/TerlaluBanyak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+  /orders/{id}/verifikasi:
+    parameters:
+      - $ref: '#/components/parameters/IdOrder'
+    post:
+      tags: [Order]
+      operationId: verifikasiOrder
+      summary: Tandai order terverifikasi
+      description: |
+        Pembeli sudah mengonfirmasi alamat lengkap, nilai COD, dan kesediaan bayar.
+        Order COD baru dikirim ke Ethix setelah langkah ini. Ditolak (422,
+        `perlu_verifikasi_manusia`) bila pelanggan bertanda riwayat RTS. Idempoten:
+        memanggil ulang pada order yang sudah terverifikasi mengembalikan 200.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Verifikasi'
+      responses:
+        '200':
+          description: Order terverifikasi.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/ValidasiGagal'
+        '401':
+          $ref: '#/components/responses/TidakTerautentikasi'
+        '429':
+          $ref: '#/components/responses/TerlaluBanyak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+        '409':
+          description: Status order sudah melewati tahap verifikasi atau dibatalkan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Galat'
+        '422':
+          description: '`perlu_verifikasi_manusia` atau `nilai_cod_tidak_cocok`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Galat'
+  /stock:
+    get:
+      tags: [Katalog]
+      operationId: daftarStok
+      summary: Stok tersedia per SKU
+      description: |
+        Stok tersedia = stok fisik terakhir dari WMS Ethix − order yang sudah dibuat
+        tetapi belum dialokasikan Ethix. Untuk paket: stok komponen dibagi isi paket,
+        dibulatkan ke bawah.
+      parameters:
+        - name: sku
+          in: query
+          description: Satu atau lebih SKU, dipisah koma. Kosong = semua produk aktif.
+          schema:
+            type: string
+            example: VVG-01,KKT-P2
+      responses:
+        '200':
+          description: Stok per SKU.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Stok'
+        '401':
+          $ref: '#/components/responses/TidakTerautentikasi'
+        '429':
+          $ref: '#/components/responses/TerlaluBanyak'
+  /prices:
+    get:
+      tags: [Katalog]
+      operationId: daftarHarga
+      summary: Harga aktif per SKU
+      responses:
+        '200':
+          description: Harga aktif.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Harga'
+        '401':
+          $ref: '#/components/responses/TidakTerautentikasi'
+        '429':
+          $ref: '#/components/responses/TerlaluBanyak'
+webhooks:
+  order.status_changed:
+    post:
+      tags: [Order]
+      operationId: webhookOrderStatusChanged
+      summary: OMS memberi tahu perubahan status order ke SaaS CS AI
+      description: |
+        Dipakai CS AI untuk follow-up otomatis: resi terbit, gagal antar (pembeli
+        dihubungi sebelum paket dikembalikan), COD ditolak, dan seterusnya.
+
+        **Keamanan:** `X-Oms-Signature` = `sha256=` + HMAC-SHA256 hex dari
+        `<X-Oms-Timestamp>.<body mentah>` dengan secret webhook bersama. Tolak bila
+        tanda tangan salah atau timestamp lebih dari 5 menit dari waktu sekarang.
+
+        **Pengiriman:** sukses bila CS AI membalas 2xx dalam 10 detik. Selain itu OMS
+        mengulang dengan jeda bertahap (30 dtk, 1, 2, 4, … menit; maks. 8 kali).
+        Event bisa terkirim lebih dari sekali; pakai `Idempotency-Key` (= `event_id`)
+        untuk mengabaikan duplikat. Urutan tidak dijamin; pakai `terjadi_at`.
+      parameters:
+        - name: X-Oms-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+            example: sha256=6f1c…
+        - name: X-Oms-Timestamp
+          in: header
+          required: true
+          description: Detik sejak epoch (UTC).
+          schema:
+            type: integer
+            example: 1793170000
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventStatusOrder'
+      responses:
+        '200':
+          description: Diterima CS AI.
+        '400':
+          description: Payload atau tanda tangan tidak valid; OMS tidak mengulang.
+components:
+  securitySchemes:
+    bearerApiKey:
+      type: http
+      scheme: bearer
+      description: 'API key OMS: `Authorization: Bearer gok_<prefix>_<secret>`'
+    headerApiKey:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+  parameters:
+    IdLead:
+      name: id
+      in: path
+      required: true
+      description: ID lead di OMS (dikembalikan saat lead dibuat).
+      schema:
+        type: string
+        format: uuid
+    IdOrder:
+      name: id
+      in: path
+      required: true
+      description: ID order di OMS.
+      schema:
+        type: string
+        format: uuid
+  responses:
+    ValidasiGagal:
+      description: Data tidak valid. `error.detail` berisi daftar field dan pesannya.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error:
+              kode: validasi_gagal
+              pesan: Data tidak valid
+              detail:
+                - field: no_wa
+                  pesan: Nomor WA tidak valid
+    TidakTerautentikasi:
+      description: API key tidak ada, salah, atau sudah dicabut.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+    TidakDiizinkan:
+      description: API key tidak punya scope untuk endpoint ini.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+    TerlaluBanyak:
+      description: Melewati batas 60 permintaan per menit untuk API key ini.
+      headers:
+        Retry-After:
+          description: Detik sebelum boleh mencoba lagi.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error:
+              kode: terlalu_banyak_permintaan
+              pesan: Melewati batas 60 permintaan per menit untuk API key ini
+              detail:
+                coba_lagi_detik: 12
+    TidakDitemukan:
+      description: Data tidak ditemukan.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+    Konflik:
+      description: Perubahan bertentangan dengan status saat ini.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+  schemas:
+    Galat:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [kode, pesan]
+          properties:
+            kode:
+              type: string
+              description: Kode mesin, mis. `validasi_gagal`, `tidak_terautentikasi`, `stok_tidak_cukup`.
+            pesan:
+              type: string
+              description: Pesan untuk manusia (Bahasa Indonesia).
+            detail: {}
+    Rupiah:
+      type: integer
+      minimum: 0
+      description: Integer rupiah, tanpa desimal.
+      example: 95000
+    Waktu:
+      type: string
+      format: date-time
+      description: ISO-8601 UTC.
+      example: '2026-10-28T07:05:00Z'
+    NoWa:
+      type: string
+      description: Nomor WhatsApp Indonesia. Respons OMS selalu `628…`.
+      example: '6281234567890'
+    Entitas:
+      type: string
+      enum: [SSR, FHI]
+    StatusLead:
+      type: string
+      enum: [baru, direspon, follow_up, closing, gagal]
+    StatusOrder:
+      type: string
+      enum: [baru, terverifikasi, di_gudang, dikirim, terkirim, batal, rts]
+      description: |
+        `terkirim` = paket diterima pembeli; status akhir sukses. OMS tidak mencatat
+        pencairan COD (tetap antara Ethix dan Finance).
+    MetodeBayar:
+      type: string
+      enum: [cod, transfer]
+    Segmen:
+      type: string
+      enum: [nc, ro, reseller]
+      description: Segmen pelanggan menurut CS AI. `nc` = new customer, `ro` = repeat order.
+    Atribusi:
+      type: object
+      properties:
+        kanal:
+          type: string
+          enum: [click_to_whatsapp, landing_page, organik, lainnya]
+        campaign_id:
+          type: [string, 'null']
+          example: '120210000000000001'
+        adset_id:
+          type: [string, 'null']
+        ad_id:
+          type: [string, 'null']
+          example: '120210000000000003'
+    LeadBaru:
+      allOf:
+        - $ref: '#/components/schemas/Atribusi'
+        - type: object
+          required: [external_id, no_wa, masuk_at]
+          properties:
+            external_id:
+              type: string
+              maxLength: 100
+              description: ID percakapan/lead di SaaS CS AI.
+            no_wa:
+              type: string
+              example: '081234567890'
+            nama:
+              type: string
+              maxLength: 100
+            sku_ditanya:
+              type: string
+              description: SKU produk yang pertama ditanyakan.
+              example: BSR-01
+            masuk_at:
+              $ref: '#/components/schemas/Waktu'
+            segmen:
+              $ref: '#/components/schemas/Segmen'
+            catatan:
+              type: string
+              maxLength: 2000
+    UbahLead:
+      type: object
+      minProperties: 1
+      properties:
+        status:
+          $ref: '#/components/schemas/StatusLead'
+        respon_pertama_at:
+          $ref: '#/components/schemas/Waktu'
+        handover:
+          type: object
+          description: Oper lead ke CS manusia. Lead lalu muncul di antrian CS Leader.
+          required: [alasan]
+          properties:
+            alasan:
+              type: string
+              maxLength: 500
+              example: Pembeli minta bicara dengan manusia
+            terjadi_at:
+              $ref: '#/components/schemas/Waktu'
+        catatan:
+          type: string
+          maxLength: 2000
+    Lead:
+      allOf:
+        - $ref: '#/components/schemas/Atribusi'
+        - type: object
+          required: [id, external_id, no_wa, agen, status, handover, masuk_at]
+          properties:
+            id:
+              type: string
+              format: uuid
+            external_id:
+              type: string
+            no_wa:
+              $ref: '#/components/schemas/NoWa'
+            nama:
+              type: [string, 'null']
+            agen:
+              type: string
+              enum: [cs_ai, cs_manusia]
+            status:
+              $ref: '#/components/schemas/StatusLead'
+            handover:
+              type: boolean
+            handover_at:
+              oneOf:
+                - $ref: '#/components/schemas/Waktu'
+                - type: 'null'
+            masuk_at:
+              $ref: '#/components/schemas/Waktu'
+            respon_pertama_at:
+              oneOf:
+                - $ref: '#/components/schemas/Waktu'
+                - type: 'null'
+            segmen:
+              oneOf:
+                - $ref: '#/components/schemas/Segmen'
+                - type: 'null'
+    Alamat:
+      type: object
+      required: [alamat, kota, provinsi]
+      properties:
+        alamat:
+          type: string
+          maxLength: 500
+          description: Jalan, nomor rumah, RT/RW, patokan.
+        kelurahan:
+          type: string
+        kecamatan:
+          type: string
+        kota:
+          type: string
+          example: Bandung
+        provinsi:
+          type: string
+          example: Jawa Barat
+        kode_pos:
+          type: string
+          pattern: '^\d{5}$'
+    Penerima:
+      type: object
+      required: [nama, no_wa]
+      properties:
+        nama:
+          type: string
+          maxLength: 100
+        no_wa:
+          type: string
+    ItemBaru:
+      type: object
+      required: [sku, qty]
+      properties:
+        sku:
+          type: string
+          example: VVG-P2
+        qty:
+          type: integer
+          minimum: 1
+          maximum: 100
+    OrderBaru:
+      type: object
+      required: [external_id, lead_id, metode_bayar, penerima, alamat, items, total]
+      properties:
+        external_id:
+          type: string
+          maxLength: 100
+          description: ID checkout di SaaS CS AI.
+        lead_id:
+          type: string
+          format: uuid
+          description: ID lead di OMS.
+        metode_bayar:
+          $ref: '#/components/schemas/MetodeBayar'
+        penerima:
+          $ref: '#/components/schemas/Penerima'
+        alamat:
+          $ref: '#/components/schemas/Alamat'
+        items:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/ItemBaru'
+        ongkir:
+          allOf:
+            - $ref: '#/components/schemas/Rupiah'
+          description: Ongkir yang dibebankan ke pembeli untuk seluruh checkout.
+        diskon:
+          allOf:
+            - $ref: '#/components/schemas/Rupiah'
+          description: Diskon untuk seluruh checkout. Pembagian ke order per entitas diatur OMS.
+        subsidi_ongkir:
+          allOf:
+            - $ref: '#/components/schemas/Rupiah'
+          description: Subsidi ongkir dari promo CS AI; maksimal `ongkir`.
+        biaya_cod:
+          allOf:
+            - $ref: '#/components/schemas/Rupiah'
+          description: Biaya COD yang dibebankan ke pembeli (sebelum subsidi). 0 untuk transfer.
+        subsidi_admin_cod:
+          allOf:
+            - $ref: '#/components/schemas/Rupiah'
+          description: Subsidi admin COD; maksimal `biaya_cod`. 0 untuk transfer.
+        total:
+          allOf:
+            - $ref: '#/components/schemas/Rupiah'
+          description: |
+            Yang dibayar pembeli untuk seluruh checkout, hasil hitungan CS AI. Harus sama
+            dengan subtotal − diskon + ongkir − subsidi_ongkir + biaya_cod − subsidi_admin_cod.
+        segmen:
+          $ref: '#/components/schemas/Segmen'
+        catatan:
+          type: string
+          maxLength: 1000
+    Verifikasi:
+      type: object
+      required: [dikonfirmasi_at, nilai_cod_dikonfirmasi]
+      properties:
+        dikonfirmasi_at:
+          $ref: '#/components/schemas/Waktu'
+        nilai_cod_dikonfirmasi:
+          allOf:
+            - $ref: '#/components/schemas/Rupiah'
+          description: Nilai COD yang disebut ke pembeli; harus sama dengan `nilai_cod` order. 0 untuk transfer.
+        catatan:
+          type: string
+          maxLength: 1000
+    ItemOrder:
+      type: object
+      required: [sku, nama, qty, harga_satuan, diskon, subtotal]
+      properties:
+        sku:
+          type: string
+        nama:
+          type: string
+        qty:
+          type: integer
+        harga_satuan:
+          $ref: '#/components/schemas/Rupiah'
+        diskon:
+          $ref: '#/components/schemas/Rupiah'
+        subtotal:
+          $ref: '#/components/schemas/Rupiah'
+    Pengiriman:
+      type: object
+      required: [kurir, resi]
+      properties:
+        kurir:
+          type: string
+          example: JNE
+        resi:
+          type: string
+        status_kurir:
+          type: [string, 'null']
+          description: Status terakhir dari kurir, apa adanya.
+        percobaan_antar:
+          type: integer
+        dikirim_at:
+          oneOf:
+            - $ref: '#/components/schemas/Waktu'
+            - type: 'null'
+        diterima_at:
+          oneOf:
+            - $ref: '#/components/schemas/Waktu'
+            - type: 'null'
+    Order:
+      type: object
+      required:
+        [
+          id,
+          nomor,
+          order_group_id,
+          entitas,
+          status,
+          metode_bayar,
+          subtotal,
+          diskon,
+          ongkir,
+          subsidi_ongkir,
+          biaya_cod,
+          subsidi_admin_cod,
+          total,
+          nilai_cod,
+          segmen,
+          items,
+          dibuat_at,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        nomor:
+          type: string
+          example: GRS-20261028-0001
+        order_group_id:
+          type: string
+          format: uuid
+        external_id:
+          type: [string, 'null']
+        lead_id:
+          type: [string, 'null']
+          format: uuid
+        entitas:
+          $ref: '#/components/schemas/Entitas'
+        status:
+          $ref: '#/components/schemas/StatusOrder'
+        metode_bayar:
+          $ref: '#/components/schemas/MetodeBayar'
+        perlu_verifikasi_manusia:
+          type: boolean
+          description: Pelanggan punya riwayat RTS; verifikasi hanya oleh CS manusia.
+        subtotal:
+          $ref: '#/components/schemas/Rupiah'
+        diskon:
+          $ref: '#/components/schemas/Rupiah'
+        ongkir:
+          $ref: '#/components/schemas/Rupiah'
+        subsidi_ongkir:
+          $ref: '#/components/schemas/Rupiah'
+        biaya_cod:
+          $ref: '#/components/schemas/Rupiah'
+        subsidi_admin_cod:
+          $ref: '#/components/schemas/Rupiah'
+        total:
+          allOf:
+            - $ref: '#/components/schemas/Rupiah'
+          description: |
+            subtotal − diskon + ongkir − subsidi_ongkir + biaya_cod − subsidi_admin_cod.
+            Pada checkout campur, ongkir dan subsidi ongkir dibagi sebanding berat; biaya
+            COD sebanding nilai order sebelum biaya COD; subsidi admin sebanding biaya COD.
+        nilai_cod:
+          $ref: '#/components/schemas/Rupiah'
+        segmen:
+          oneOf:
+            - $ref: '#/components/schemas/Segmen'
+            - type: 'null'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemOrder'
+        pengiriman:
+          oneOf:
+            - $ref: '#/components/schemas/Pengiriman'
+            - type: 'null'
+        dibuat_at:
+          $ref: '#/components/schemas/Waktu'
+        terverifikasi_at:
+          oneOf:
+            - $ref: '#/components/schemas/Waktu'
+            - type: 'null'
+    Checkout:
+      type: object
+      required: [order_group_id, external_id, orders]
+      properties:
+        order_group_id:
+          type: string
+          format: uuid
+        external_id:
+          type: string
+        orders:
+          type: array
+          minItems: 1
+          maxItems: 2
+          description: Satu order per entitas.
+          items:
+            $ref: '#/components/schemas/Order'
+    Stok:
+      type: object
+      required: [sku, nama, tipe, tersedia, diperbarui_at]
+      properties:
+        sku:
+          type: string
+        nama:
+          type: string
+        tipe:
+          type: string
+          enum: [satuan, paket]
+        tersedia:
+          type: integer
+          minimum: 0
+        hari_cover:
+          type: [number, 'null']
+          description: Tersedia ÷ rata-rata terjual per hari 7 hari terakhir.
+        diperbarui_at:
+          allOf:
+            - $ref: '#/components/schemas/Waktu'
+          description: Waktu sinkron stok Ethix terakhir.
+    Harga:
+      type: object
+      required: [sku, nama, tipe, entitas, harga_jual]
+      properties:
+        sku:
+          type: string
+        nama:
+          type: string
+        tipe:
+          type: string
+          enum: [satuan, paket]
+        entitas:
+          $ref: '#/components/schemas/Entitas'
+        harga_jual:
+          $ref: '#/components/schemas/Rupiah'
+        komponen:
+          type: array
+          description: Isi paket. Kosong untuk produk satuan.
+          items:
+            type: object
+            required: [sku, qty]
+            properties:
+              sku:
+                type: string
+              qty:
+                type: integer
+    EventStatusOrder:
+      type: object
+      required: [event_id, jenis, terjadi_at, data]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        jenis:
+          type: string
+          const: order.status_changed
+        terjadi_at:
+          $ref: '#/components/schemas/Waktu'
+        data:
+          type: object
+          required: [order_id, nomor, order_group_id, status_sebelum, status]
+          properties:
+            order_id:
+              type: string
+              format: uuid
+            nomor:
+              type: string
+            order_group_id:
+              type: string
+              format: uuid
+            checkout_external_id:
+              type: [string, 'null']
+            lead_id:
+              type: [string, 'null']
+              format: uuid
+            lead_external_id:
+              type: [string, 'null']
+            status_sebelum:
+              oneOf:
+                - $ref: '#/components/schemas/StatusOrder'
+                - type: 'null'
+            status:
+              $ref: '#/components/schemas/StatusOrder'
+            alasan:
+              type: [string, 'null']
+              description: |
+                Konteks perubahan untuk follow-up, mis. `resi_terbit`, `gagal_antar`,
+                `cod_ditolak`, `dibatalkan_pembeli`.
+              example: gagal_antar
+            kurir:
+              type: [string, 'null']
+            resi:
+              type: [string, 'null']
+            percobaan_antar:
+              type: [integer, 'null']

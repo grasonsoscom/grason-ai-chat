@@ -8,6 +8,8 @@
     "vercel-build": "node scripts/pg-schema.mjs && prisma generate --schema prisma/postgres.prisma && prisma db push --schema prisma/postgres.prisma --skip-generate && tsx prisma/seed.ts && next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "ongkir:import": "tsx prisma/import-ongkir.ts",
@@ -38,6 +40,7 @@
     "prisma": "^6.19.3",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
   }
 }

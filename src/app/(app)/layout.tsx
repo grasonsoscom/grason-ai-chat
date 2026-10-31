@@ -10,7 +10,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar />
+      <Sidebar isAdmin={user.role.name === "Admin"} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Banner />
         <header className="flex h-16 items-center justify-end gap-3 border-b border-slate-200 bg-white px-4 pl-14 md:pl-4">

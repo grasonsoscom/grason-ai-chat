@@ -19,6 +19,17 @@ model Account {
   scalevEnabled   Boolean  @default(false)
   shippingFile    String?
   shippingAt      DateTime?
+  // AI/LLM settings. Empty aiProvider = fall back to environment variables.
+  aiProvider      String   @default("") // "openai" | "anthropic"
+  aiBaseUrl       String   @default("")
+  aiModel         String   @default("")
+  aiApiKeyEnc     String   @default("") // AES-256-GCM, key derived from AUTH_SECRET
+  // RajaOngkir shipping cost API. Empty key + no origin = integration off.
+  rajaOngkirApiKeyEnc   String @default("") // AES-256-GCM, key derived from AUTH_SECRET
+  rajaOngkirOriginId    Int? // Subdistrict ID from /destination/domestic-destination
+  rajaOngkirOriginLabel String @default("")
+  rajaOngkirCourier     String @default("jne")
+  rajaOngkirWeight      Int    @default(1000) // default package weight in grams
   updatedAt       DateTime @updatedAt
 }
 
@@ -73,6 +84,8 @@ model User {
   conversations Conversation[]
   broadcasts   Broadcast[]
   events       CalendarEvent[]
+  apiTokens        ApiToken[]
+  webhookEndpoints WebhookEndpoint[]
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 }
@@ -124,12 +137,15 @@ model Customer {
   notes         String           @default("")
   // "" = auto from chat history (NC or RO), or set by staff: "nc" | "ro" | "reseller"
   segment       String           @default("")
+  // Opt-out contacts are skipped by campaign launches.
+  optInWhatsapp Boolean          @default(true)
   stageId       Int?
   stage         FunnelStage?     @relation(fields: [stageId], references: [id], onDelete: SetNull)
   labels        Label[]
   conversation  Conversation?
   audiences     Audience[]
   events        CalendarEvent[]
+  broadcastRecipients BroadcastRecipient[]
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
 }
@@ -150,6 +166,22 @@ model Conversation {
   lastInboundAt   DateTime?
   lastFollowupAt  DateTime?
   messages        Message[]
+
+  // OMS GRASON integration (see docs/oms/INTEGRASI-OMS-GRASON.md).
+  // Lead.id from POST /leads. Not unique at the DB level so db push can add
+  // the nullable column to existing deployments without a data-loss prompt;
+  // the OMS module guarantees one lead per conversation.
+  omsLeadId          String?
+  omsLeadStatus      String? // baru | direspon | follow_up | closing | gagal
+  omsFirstResponseAt DateTime?
+  omsHandoverAt      DateTime?
+  omsKanal           String? // click_to_whatsapp | landing_page | organik | lainnya
+  omsCampaignId      String?
+  omsAdsetId         String?
+  omsAdId            String?
+  omsReferral        String? // Raw Meta click-to-WhatsApp referral JSON
+  omsCheckouts       OmsCheckout[]
+  omsOrders          OmsOrder[]
 }
 
 model Message {
@@ -254,6 +286,7 @@ model Broadcast {
   createdById Int?
   createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
   sentCount   Int       @default(0)
+  recipients  BroadcastRecipient[]
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 }
@@ -273,6 +306,9 @@ model AiAgent {
   followupDelayHours Int       @default(24)
   followupMessage    String    @default("")
   webhookOnReply     Boolean   @default(false)
+  // AI-order mode: the agent may create (and optionally verify) OMS orders itself.
+  autoOrder          Boolean   @default(false)
+  autoVerifyOrders   Boolean   @default(false)
   funnelId           Int?
   funnel             Funnel?   @relation(fields: [funnelId], references: [id], onDelete: SetNull)
   products           Product[]
@@ -291,4 +327,161 @@ model CalendarEvent {
   customerId Int?
   customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   createdAt  DateTime  @default(now())
+}
+
+// --- OMS GRASON integration -------------------------------------------------
+
+/// One POST /orders call. A checkout can produce two orders (one per entitas).
+model OmsCheckout {
+  id             Int          @id @default(autoincrement())
+  externalId     String       @unique // OMS external_id (chk_<conversationId>_<uuid>)
+  orderGroupId   String?      @unique
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  leadId         String? // OMS lead UUID used for this checkout
+  status         String       @default("pending") // pending | created | failed
+  createdByAi    Boolean      @default(false)
+  payload        String       @default("{}") // OrderBaru JSON (lead_id filled at send time)
+  lastError      String?
+  notifiedAt     DateTime? // Customer summary was sent
+  orders         OmsOrder[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([conversationId])
+  @@index([status])
+}
+
+/// Mirror of an OMS order. Never used as the source of truth for price/stock.
+model OmsOrder {
+  id                     Int          @id @default(autoincrement())
+  omsOrderId             String       @unique // Order.id from OMS
+  nomor                  String
+  orderGroupId           String?
+  checkoutId             Int
+  checkout               OmsCheckout  @relation(fields: [checkoutId], references: [id], onDelete: Cascade)
+  conversationId         Int
+  conversation           Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  entitas                String
+  status                 String
+  metodeBayar            String
+  subtotal               Int          @default(0)
+  diskon                 Int          @default(0)
+  ongkir                 Int          @default(0)
+  subsidiOngkir          Int          @default(0)
+  biayaCod               Int          @default(0)
+  subsidiAdminCod        Int          @default(0)
+  total                  Int          @default(0)
+  nilaiCod               Int          @default(0)
+  segmen                 String?
+  perluVerifikasiManusia Boolean      @default(false)
+  itemsJson              String       @default("[]")
+  pengirimanJson         String?
+  lastEventAt            DateTime?
+  lastPolledAt           DateTime?
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  @@index([conversationId])
+  @@index([nomor])
+  @@index([status])
+}
+
+/// Durable queue for writes that must reach OMS even when it is temporarily down.
+model OmsOutbox {
+  id            Int       @id @default(autoincrement())
+  kind          String // create_lead | patch_lead | create_order | verify_order
+  dedupeKey     String?   @unique
+  payload       String
+  status        String    @default("pending") // pending | processing | done | failed
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status, nextAttemptAt])
+}
+
+/// Inbound OMS webhook events, deduped by event_id.
+model OmsWebhookEvent {
+  id          Int       @id @default(autoincrement())
+  eventId     String    @unique
+  jenis       String
+  terjadiAt   DateTime
+  payload     String
+  attempts    Int       @default(0)
+  processedAt DateTime?
+  lastError   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([processedAt, createdAt])
+}
+
+// --- Developer platform -----------------------------------------------------
+
+/// Personal access token for the REST API. Only the SHA-256 hash is stored.
+model ApiToken {
+  id         Int       @id @default(autoincrement())
+  name       String
+  prefix     String // first 8 random chars, safe to display
+  tokenHash  String    @unique // SHA-256 of the full token
+  scopes     String    @default("") // comma separated; "*" = full access
+  userId     Int
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+/// Outbound webhook endpoint. `events` empty means every event.
+model WebhookEndpoint {
+  id          Int      @id @default(autoincrement())
+  name        String
+  url         String
+  secret      String // whsec_..., shown once in the UI
+  events      String   @default("")
+  description String   @default("")
+  enabled     Boolean  @default(true)
+  createdById Int?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  deliveries  WebhookDelivery[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([enabled])
+}
+
+model WebhookDelivery {
+  id         Int             @id @default(autoincrement())
+  endpointId Int
+  endpoint   WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  event      String
+  eventId    String
+  statusCode Int?
+  success    Boolean         @default(false)
+  durationMs Int             @default(0)
+  error      String?
+  createdAt  DateTime        @default(now())
+
+  @@index([endpointId, createdAt])
+}
+
+/// Per-customer delivery status for a broadcast campaign.
+model BroadcastRecipient {
+  id          Int       @id @default(autoincrement())
+  broadcastId Int
+  broadcast   Broadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+  customerId  Int
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  status      String    @default("pending") // pending | sent | failed
+  error       String?
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([broadcastId, customerId])
+  @@index([broadcastId, status])
 }
