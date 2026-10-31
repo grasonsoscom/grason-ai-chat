@@ -306,6 +306,8 @@ function OmsCheckoutForm({
     return sum + price * item.qty;
   }, 0);
   const region = regionFromText(provinsi) ?? "luar";
+  // OMS splits the checkout per entitas (warehouse): one parcel and one COD each.
+  const packages = new Set(items.map((item) => priceBySku.get(item.sku)?.entitas).filter(Boolean)).size;
   const quote = orderQuote({ subtotal, ongkir, diskon, metode, segment: segmen, region });
 
   const update = (index: number, patch: Partial<{ sku: string; qty: number }>) => {
@@ -528,6 +530,11 @@ function OmsCheckoutForm({
         <p className="mt-1 text-xs text-slate-500">
           Wilayah: {region === "jawa" ? "Jawa" : "Luar Jawa"}. Angka final divalidasi ulang oleh OMS dari harga aktifnya.
         </p>
+        {packages > 1 && (
+          <p className="mt-1 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800">
+            Item dari {packages} gudang berbeda: pesanan dikirim dalam {packages} paket dan {metode === "cod" ? "dibayar COD" : "ditagih"} {packages} kali. Sampaikan ke pembeli sebelum membuat order.
+          </p>
+        )}
         {metode === "cod" && !quote.eligible && (
           <p className="mt-1 text-xs text-amber-700">Minimum order untuk subsidi belum tercapai.</p>
         )}

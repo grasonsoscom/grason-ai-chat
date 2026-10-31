@@ -60,16 +60,21 @@ describe("ai order", () => {
       ready: true,
       segment: "nc",
       region: "jawa",
+      packages: 1,
     };
 
     const waiting = buildOrderContext(plan, false);
     expect(waiting).toContain(`Total: ${formatIDR(107120)}`);
     expect(waiting).toContain("Balas YA untuk membuat pesanan");
     expect(waiting).not.toContain("sudah mengonfirmasi");
+    expect(waiting).not.toContain("paket terpisah");
 
     const confirmed = buildOrderContext(plan, true);
     expect(confirmed).toContain("sudah mengonfirmasi");
     expect(confirmed).toContain("Jangan mengarang nomor order");
+
+    // Items from two warehouses: the buyer must hear about two parcels first.
+    expect(buildOrderContext({ ...plan, packages: 2 }, false)).toContain("2 paket terpisah");
   });
 });
 

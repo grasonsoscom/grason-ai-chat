@@ -44,6 +44,8 @@ export type AutoOrderPlan = {
   ready: boolean;
   segment: Segment;
   region: Region;
+  /** OMS splits a checkout per entitas (warehouse): 2 = two parcels, two COD payments. */
+  packages: number;
 };
 
 export function emptyOrderDraft(): AiOrderDraft {
@@ -188,6 +190,7 @@ export async function planAutoOrder(input: {
   const stockBySku = new Map(catalog.stock.map((s) => [s.sku, s]));
   const problems: string[] = [];
   let subtotal = 0;
+  const entities = new Set<string>();
   for (const item of draft.items) {
     const price = priceBySku.get(item.sku);
     if (!price) {
@@ -195,6 +198,7 @@ export async function planAutoOrder(input: {
       continue;
     }
     subtotal += price.harga_jual * item.qty;
+    entities.add(price.entitas);
     const stock = stockBySku.get(item.sku)?.tersedia;
     if (stock !== undefined && stock < item.qty) {
       problems.push(`Stok ${price.nama} tinggal ${stock}`);
@@ -233,6 +237,7 @@ export async function planAutoOrder(input: {
     ready: missing.length === 0 && problems.length === 0 && Boolean(promo) && (promo?.total ?? -1) >= 0,
     segment,
     region,
+    packages: Math.max(1, entities.size),
   };
 }
 
@@ -267,6 +272,12 @@ export function buildOrderContext(plan: AutoOrderPlan, confirmed: boolean) {
       );
     }
     lines.push(`- Total: ${formatIDR(promo.total)}`);
+    if (plan.packages > 1) {
+      // Buyers who expect one parcel often refuse the second COD.
+      lines.push(
+        `- Pengiriman: pesanan ini dikirim dalam ${plan.packages} paket terpisah dari gudang berbeda, jadi akan datang ${plan.packages} kali dan dibayar ${plan.packages} kali ke kurir. Jumlah semuanya sama dengan total di atas. WAJIB sampaikan ini dengan jelas sebelum meminta konfirmasi.`,
+      );
+    }
   }
 
   const addressComplete = Boolean(draft.alamat && draft.kecamatan && draft.kota && draft.provinsi);

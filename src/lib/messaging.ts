@@ -1,5 +1,6 @@
 import { db } from "./db";
 import { cancelAiReply, randomDelaySec, scheduleAiReply } from "./ai-delay";
+import { sendTypingVia } from "./channel";
 import { customerSegment } from "./promo";
 import { generateReply, type ChatTurn } from "./ai";
 import { assertCoins, spendCoins, COIN_COSTS } from "./coins";
@@ -159,6 +160,9 @@ export async function aiRespond(conversationId: number): Promise<string> {
 
   try {
     await assertCoins(COIN_COSTS.aiReply);
+    // "typing…" while the reply is generated, like a person answering.
+    const device = conv.deviceId ? await db.device.findUnique({ where: { id: conv.deviceId } }) : null;
+    await sendTypingVia(device, conv.customer.phone, lastIn?.externalId).catch(() => {});
     const turns = await history(conversationId);
     const segment = await customerSegment(conv.customerId);
     const lastAiText = [...turns].reverse().find((t) => t.role === "assistant")?.text ?? "";

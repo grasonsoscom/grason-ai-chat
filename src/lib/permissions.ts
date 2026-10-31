@@ -14,6 +14,7 @@ export const MODULES = [
   "staff",
   "ai-agent",
   "integrasi",
+  "laporan",
 ] as const;
 
 export type ModuleKey = (typeof MODULES)[number];

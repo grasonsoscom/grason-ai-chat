@@ -24,6 +24,7 @@ const GROUPS: NavGroup[] = [
   {
     label: "Commerce",
     items: [
+      { href: "/monitor-order", label: "Monitor Order", icon: "🚨", module: "pesan" },
       { href: "/ongkir", label: "Cek Ongkir", icon: "🚚" },
       { href: "/produk", label: "Produk", icon: "📦", module: "produk" },
       { href: "/funnels", label: "Funnels", icon: "🪜", module: "funnels" },
@@ -36,6 +37,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { href: "/staff", label: "Staff", icon: "🧑‍💼", module: "staff" },
       { href: "/ai-agent", label: "AI Agent", icon: "🤖", module: "ai-agent" },
+      { href: "/laporan", label: "Laporan", icon: "📊", module: "laporan" },
     ],
   },
   {

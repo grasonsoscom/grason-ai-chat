@@ -244,6 +244,13 @@ export async function sendHubText(deviceId: number, to: string, text: string): P
   }
 }
 
+/** Shows "typing…" in the customer's chat. Best effort. */
+export async function sendHubTyping(deviceId: number, to: string) {
+  const s = findByDevice(deviceId);
+  if (!s?.sock || s.state !== "open") return;
+  await s.sock.sendPresenceUpdate("composing", `${to.replace(/\D/g, "")}@s.whatsapp.net`).catch(() => {});
+}
+
 /** Reconnects every saved Hub session. Called once at server start. */
 export async function restoreHubSessions() {
   if (hub.restored) return;

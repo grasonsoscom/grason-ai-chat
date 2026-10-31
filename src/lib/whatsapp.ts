@@ -65,3 +65,14 @@ export function sendTemplate(to: string, templateName: string, opts: { languageC
 export async function markRead(externalId: string, phoneNumberId?: string | null) {
   await post({ status: "read", message_id: externalId }, phoneNumberId).catch(() => {});
 }
+
+/**
+ * Shows "typing…" to the customer (Cloud API: tied to their last message,
+ * cleared by our reply or after ~25 s). Best effort.
+ */
+export async function sendTyping(inboundExternalId: string, phoneNumberId?: string | null) {
+  await post(
+    { status: "read", message_id: inboundExternalId, typing_indicator: { type: "text" } },
+    phoneNumberId,
+  ).catch(() => {});
+}

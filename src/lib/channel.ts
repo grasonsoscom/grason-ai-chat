@@ -1,7 +1,7 @@
 // Routes outgoing messages to the device's channel: Cloud API or WhatsApp Hub.
 // Baileys is imported lazily so serverless/CLI processes never load it unless
 // a Hub-linked number is actually used.
-import { HUB_API_TYPE, sendTemplate, sendText } from "./whatsapp";
+import { HUB_API_TYPE, sendTemplate, sendText, sendTyping } from "./whatsapp";
 
 type DeviceRef = { id: number; apiType: string; phoneNumberId?: string | null } | null | undefined;
 
@@ -11,6 +11,15 @@ export async function sendTextVia(device: DeviceRef, to: string, text: string) {
     return sendHubText(device.id, to, text);
   }
   return sendText(to, text, device?.phoneNumberId);
+}
+
+/** "typing…" before an AI reply; needs the customer's last message id on Cloud API. */
+export async function sendTypingVia(device: DeviceRef, to: string, lastInboundExternalId?: string | null) {
+  if (device?.apiType === HUB_API_TYPE) {
+    const { sendHubTyping } = await import("./wa-hub");
+    return sendHubTyping(device.id, to);
+  }
+  if (lastInboundExternalId) await sendTyping(lastInboundExternalId, device?.phoneNumberId);
 }
 
 /** Hub has no Meta-approved templates, so the template body is sent as plain text. */
