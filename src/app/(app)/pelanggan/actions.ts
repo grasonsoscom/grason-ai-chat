@@ -1,14 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { optId, required, run, str, type ActionState } from "@/lib/action";
 import { emitWebhook } from "@/lib/webhook";
 
 export async function saveCustomer(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("pelanggan");
     const id = optId(fd, "id");
     const labelIds = fd.getAll("labelIds").map(Number).filter(Boolean);
     const optInRaw = fd.get("optInWhatsapp");
@@ -40,7 +40,7 @@ export async function saveCustomer(_: ActionState, fd: FormData) {
 
 export async function deleteCustomer(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("pelanggan");
     await db.customer.delete({ where: { id: Number(fd.get("id")) } });
     revalidatePath("/pelanggan");
     return "Pelanggan dihapus.";

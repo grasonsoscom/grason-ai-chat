@@ -5,8 +5,10 @@ import { db } from "@/lib/db";
 import { formatIDR } from "@/lib/format";
 import { imageUrl } from "@/lib/uploads";
 import { createProduct, deleteProduct } from "./actions";
+import { requirePageAccess } from "@/lib/auth";
 
 export default async function ProdukPage() {
+  await requirePageAccess("produk");
   const products = await db.product.findMany({ include: { images: { take: 1 }, variants: true }, orderBy: { createdAt: "desc" } });
   const addBtn = <form action={createProduct}><button className="btn btn-primary">+ Tambah Produk</button></form>;
   return (

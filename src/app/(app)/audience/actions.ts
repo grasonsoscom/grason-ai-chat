@@ -1,13 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { required, run, type ActionState } from "@/lib/action";
 
 export async function createAudience(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("audience");
     const ids = fd.getAll("customerIds").map(Number).filter(Boolean);
     if (ids.length === 0) throw new Error("Pilih minimal satu pelanggan.");
     await db.audience.create({ data: { name: required(fd, "name", "Nama audiens"), type: "Manual", customers: { connect: ids.map((id) => ({ id })) } } });
@@ -33,7 +33,7 @@ function parseCsv(text: string) {
 
 export async function importAudience(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("audience");
     const file = fd.get("file");
     if (!(file instanceof File) || file.size === 0) throw new Error("Pilih file CSV.");
     if (file.size > 5 * 1024 * 1024) throw new Error("File maksimal 5 MB.");
@@ -54,7 +54,7 @@ export async function importAudience(_: ActionState, fd: FormData) {
 
 export async function deleteAudience(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("audience");
     await db.audience.delete({ where: { id: Number(fd.get("id")) } });
     revalidatePath("/audience");
     return "Audiens dihapus.";

@@ -1,13 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { optId, required, run, str, type ActionState } from "@/lib/action";
 
 export async function saveEvent(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("kalender");
     const date = new Date(`${required(fd, "date", "Tanggal")}T${str(fd, "time") || "09:00"}:00+07:00`);
     if (isNaN(date.getTime())) throw new Error("Tanggal tidak valid.");
     await db.calendarEvent.create({
@@ -23,7 +23,7 @@ export async function saveEvent(_: ActionState, fd: FormData) {
 
 export async function deleteEvent(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("kalender");
     await db.calendarEvent.delete({ where: { id: Number(fd.get("id")) } });
     revalidatePath("/kalender");
     return "Jadwal dihapus.";

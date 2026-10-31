@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { renumberFunnel } from "@/lib/funnel";
 import { num, required, run, str, type ActionState } from "@/lib/action";
@@ -10,7 +10,7 @@ const done = (msg: string) => { revalidatePath("/funnels"); return msg; };
 
 export async function addFunnel(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("funnels");
     await db.funnel.create({ data: { name: required(fd, "name", "Nama funnel"), levels: { create: { order: 1 } } } });
     return done("Funnel dibuat.");
   });
@@ -18,7 +18,7 @@ export async function addFunnel(_: ActionState, fd: FormData) {
 
 export async function deleteFunnel(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("funnels");
     await db.funnel.delete({ where: { id: Number(fd.get("id")) } });
     return done("Funnel dihapus.");
   });
@@ -27,7 +27,7 @@ export async function deleteFunnel(_: ActionState, fd: FormData) {
 /** Inserts a new level before the given position (1-based). */
 export async function insertLevel(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("funnels");
     const funnelId = Number(fd.get("funnelId"));
     const position = num(fd, "position");
     await db.funnelLevel.updateMany({ where: { funnelId, order: { gte: position } }, data: { order: { increment: 1 } } });
@@ -39,7 +39,7 @@ export async function insertLevel(_: ActionState, fd: FormData) {
 
 export async function deleteLevel(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("funnels");
     const level = await db.funnelLevel.findUniqueOrThrow({ where: { id: Number(fd.get("id")) }, include: { _count: { select: { stages: true } } } });
     if (level._count.stages > 0) throw new Error("Hapus atau pindahkan semua tahapan di tingkat ini terlebih dahulu.");
     await db.funnelLevel.delete({ where: { id: level.id } });
@@ -50,7 +50,7 @@ export async function deleteLevel(_: ActionState, fd: FormData) {
 
 export async function saveStage(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("funnels");
     const id = Number(fd.get("id")) || null;
     const levelId = Number(fd.get("levelId"));
     const level = await db.funnelLevel.findUniqueOrThrow({ where: { id: levelId } });
@@ -70,7 +70,7 @@ export async function saveStage(_: ActionState, fd: FormData) {
 
 export async function deleteStage(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("funnels");
     const stage = await db.funnelStage.delete({ where: { id: Number(fd.get("id")) }, include: { level: true } });
     await renumberFunnel(stage.level.funnelId);
     return done("Tahapan dihapus.");
@@ -79,7 +79,7 @@ export async function deleteStage(_: ActionState, fd: FormData) {
 
 export async function moveStage(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("funnels");
     const stage = await db.funnelStage.findUniqueOrThrow({ where: { id: Number(fd.get("id")) }, include: { level: true } });
     const dir = str(fd, "dir") === "up" ? -1 : 1;
     const neighbor = await db.funnelStage.findFirst({ where: { levelId: stage.levelId, order: stage.order + dir } });
@@ -96,7 +96,7 @@ export async function moveStage(_: ActionState, fd: FormData) {
 
 export async function addLabel(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("funnels");
     await db.label.create({ data: { name: required(fd, "name", "Nama label"), color: str(fd, "color") || "#22c55e" } });
     return done("Label ditambahkan.");
   });
@@ -104,7 +104,7 @@ export async function addLabel(_: ActionState, fd: FormData) {
 
 export async function deleteLabel(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("funnels");
     await db.label.delete({ where: { id: Number(fd.get("id")) } });
     return done("Label dihapus.");
   });

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Banner, Sidebar } from "@/components/sidebar";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { allowedModules } from "@/lib/permissions";
 import { logout } from "../login/actions";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -10,7 +11,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar isAdmin={user.role.name === "Admin"} />
+      <Sidebar isAdmin={user.role.name === "Admin"} modules={allowedModules(user.role)} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Banner />
         <header className="flex h-16 items-center justify-end gap-3 border-b border-slate-200 bg-white px-4 pl-14 md:pl-4">

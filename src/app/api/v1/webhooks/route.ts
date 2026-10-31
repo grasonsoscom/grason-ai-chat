@@ -13,18 +13,18 @@ import { webhookJson } from "@/lib/api/serializers";
 import { db } from "@/lib/db";
 import { WEBHOOK_EVENTS } from "@/lib/webhooks/events";
 import { generateWebhookSecret } from "@/lib/webhooks/signature";
+import { assertSafeWebhookUrl, UnsafeWebhookUrlError } from "@/lib/webhooks/url-guard";
 
 const SUBSCRIBABLE = new Set(
   WEBHOOK_EVENTS.filter((event) => event.subscribable).map((event) => event.key),
 );
 
-function validateUrl(raw: string): string {
+async function validateUrl(raw: string): Promise<string> {
   try {
-    const url = new URL(raw);
-    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("protocol");
-    return url.toString();
-  } catch {
-    throw validationError({ url: ["URL harus diawali http:// atau https:// dan valid."] });
+    return await assertSafeWebhookUrl(raw);
+  } catch (e) {
+    if (e instanceof UnsafeWebhookUrlError) throw validationError({ url: [e.message] });
+    throw e;
   }
 }
 
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
     const auth = await authenticateApiToken(req, "webhooks:write");
     const body = await readJson<Record<string, unknown>>(req);
     const name = requiredString(body.name, "name");
-    const url = validateUrl(requiredString(body.url, "url"));
+    const url = await validateUrl(requiredString(body.url, "url"));
     const description = optionalString(body.description) ?? "";
     const enabled = optionalBoolean(body.enabled, "enabled") ?? true;
 

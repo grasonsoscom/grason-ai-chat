@@ -2,12 +2,14 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { optId, required, run, str, type ActionState } from "@/lib/action";
 import { aiRespond, recordInbound, sendStaffMessage, sendTemplateMessage } from "@/lib/messaging";
 import { addSystemNote } from "@/lib/outbound";
 import { formatIDR } from "@/lib/format";
+import { quoteOngkir } from "@/lib/ongkir-quote";
+import { isAdminRole } from "@/lib/permissions";
 import { emitWebhook } from "@/lib/webhook";
 import { customerSegment, orderQuote, regionFromText, type Segment } from "@/lib/promo";
 import { getOmsCatalog } from "@/lib/oms/catalog";
@@ -22,7 +24,7 @@ import type { ItemBaru, MetodeBayar, OrderBaru, Verifikasi } from "@/lib/oms/typ
 
 export async function sendMessage(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("pesan");
     const id = Number(fd.get("conversationId"));
     const templateId = optId(fd, "templateId");
     const conv = await db.conversation.findUniqueOrThrow({ where: { id } });
@@ -36,7 +38,7 @@ export async function sendMessage(_: ActionState, fd: FormData) {
 
 export async function updateConversation(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("pesan");
     const id = Number(fd.get("conversationId"));
     const mode = str(fd, "mode");
     if (!["ai", "staf", "eskalasi"].includes(mode)) throw new Error("Mode tidak valid.");
@@ -66,7 +68,7 @@ export async function updateConversation(_: ActionState, fd: FormData) {
 
 export async function requestAiReply(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("pesan");
     const status = await aiRespond(Number(fd.get("conversationId")));
     revalidatePath("/pesan");
     const messages: Record<string, string> = {
@@ -83,7 +85,7 @@ export async function requestAiReply(_: ActionState, fd: FormData) {
 /** Testing helper: injects an inbound message as if it came from WhatsApp. */
 export async function simulateInbound(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("pesan");
     await recordInbound({
       phone: required(fd, "phone", "Nomor"),
       name: str(fd, "name"),
@@ -99,7 +101,7 @@ export async function simulateInbound(_: ActionState, fd: FormData) {
 /** Agen AI switch in the chat room: on = AI replies, off = staff reply. */
 export async function setAiMode(conversationId: number, on: boolean): Promise<{ error?: string }> {
   try {
-    const me = await requireUser();
+    const me = await requirePermission("pesan");
     const conv = await db.conversation.findUniqueOrThrow({ where: { id: conversationId } });
     const mode = on ? "ai" : "staf";
     if (conv.mode !== mode) {
@@ -125,10 +127,44 @@ export async function setAiMode(conversationId: number, on: boolean): Promise<{ 
     return { error: (e as Error).message || "Gagal mengubah Agen AI." };
   }
 }
+/**
+ * Pricing rules for non-admin staff: no discount, and ongkir may not be below
+ * the server's J&T quote for the address. Returns a note to log when the quote
+ * is unavailable (RajaOngkir down) and the staff value is accepted unchecked.
+ */
+async function assertStaffPricing(input: {
+  diskon: number;
+  ongkir: number;
+  kecamatan: string;
+  kota: string;
+  provinsi: string;
+  kode_pos: string;
+}): Promise<string | null> {
+  if (input.diskon > 0) throw new Error("Hanya Admin yang boleh memberi diskon.");
+  const quote = await quoteOngkir({
+    kecamatan: input.kecamatan || undefined,
+    kota: input.kota,
+    provinsi: input.provinsi,
+    kode_pos: input.kode_pos || undefined,
+  }).catch(() => null);
+  if (!quote) {
+    return `Ongkir ${formatIDR(input.ongkir)} diisi manual dan tidak bisa dicek otomatis (cek ongkir gagal).`;
+  }
+  if (input.ongkir < quote.cost) {
+    throw new Error(
+      `Ongkir minimal ${formatIDR(quote.cost)} (${quote.courier} ${quote.service} ke ${quote.destination}). Hubungi Admin untuk ongkir lebih rendah.`,
+    );
+  }
+  return null;
+}
+
 /** Staff-assisted checkout: one POST /orders for all items in the conversation. */
 export async function createOmsCheckout(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    const me = await requirePermission("pesan");
+    // Discount, segment and below-quote ongkir change what the courier collects,
+    // so only Admin may set them (see assertStaffPricing).
+    const isAdmin = isAdminRole(me.role);
     if (!omsConfigured()) throw new Error("OMS belum dikonfigurasi. Isi OMS_BASE_URL dan OMS_API_KEY.");
 
     const conversationId = Number(fd.get("conversationId"));
@@ -180,6 +216,9 @@ export async function createOmsCheckout(_: ActionState, fd: FormData) {
     const diskon = Number(fd.get("diskon") ?? 0);
     assertRupiah(ongkir, "Ongkir");
     assertRupiah(diskon, "Diskon");
+    const ongkirNote = isAdmin
+      ? null
+      : await assertStaffPricing({ diskon, ongkir, kecamatan, kota, provinsi, kode_pos });
 
     // OMS v2: the CS AI must send the total and COD breakdown; OMS validates it
     // against its own active prices (GET /prices).
@@ -194,7 +233,8 @@ export async function createOmsCheckout(_: ActionState, fd: FormData) {
     }
     if (diskon > subtotal) throw new Error("Diskon tidak boleh melebihi subtotal.");
 
-    const segmenInput = str(fd, "segmen");
+    // Non-admins always get the segment derived from the customer's history.
+    const segmenInput = isAdmin ? str(fd, "segmen") : "";
     const segmen: Segment =
       segmenInput === "nc" || segmenInput === "ro" || segmenInput === "reseller"
         ? segmenInput
@@ -237,6 +277,7 @@ export async function createOmsCheckout(_: ActionState, fd: FormData) {
     const row = await db.omsCheckout.create({
       data: { externalId: payload.external_id, conversationId, payload: JSON.stringify(payload) },
     });
+    if (ongkirNote) await addSystemNote(conversationId, `${ongkirNote} Diisi oleh ${me.name}.`);
 
     // If the lead is not created yet, let the outbox create it first instead
     // of blocking the UI on a slow/unreachable OMS.
@@ -285,7 +326,7 @@ export async function createOmsCheckout(_: ActionState, fd: FormData) {
 /** Verifies one order after the buyer confirms address, COD amount, and willingness to pay. */
 export async function verifyOmsOrder(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("pesan");
     if (!omsConfigured()) throw new Error("OMS belum dikonfigurasi. Isi OMS_BASE_URL dan OMS_API_KEY.");
 
     const orderId = Number(fd.get("orderId"));
@@ -334,7 +375,7 @@ export async function verifyOmsOrder(_: ActionState, fd: FormData) {
 
 export async function refreshOmsOrder(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("pesan");
     const orderId = Number(fd.get("orderId"));
     try {
       const order = await syncOrder(orderId);
@@ -348,7 +389,7 @@ export async function refreshOmsOrder(_: ActionState, fd: FormData) {
 
 export async function markLeadFailed(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("pesan");
     const conversationId = Number(fd.get("conversationId"));
     await omsMarkFailed(conversationId);
     after(() => processOutbox().catch((e) => console.error("[oms] outbox kick failed:", (e as Error).message)));

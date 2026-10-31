@@ -7,6 +7,7 @@ import { addDevice, addTemplate, assignStaff, deleteDevice, deleteTemplate, disc
 import { CallbackUrl } from "./cloud-setup";
 import { HubPairing } from "./hub-pair";
 import { HUB_UNAVAILABLE, hubSupported } from "@/lib/runtime";
+import { requirePageAccess } from "@/lib/auth";
 
 function Check({ ok, label }: { ok: boolean; label: string }) {
   return <li className={ok ? "text-green-700" : "text-red-600"}>{ok ? "✓" : "✗"} {label}</li>;
@@ -50,6 +51,7 @@ function loadDevices() {
 }
 
 export default async function WhatsAppPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  await requirePageAccess("whatsapp");
   const tab = (await searchParams).tab === "hub" ? "hub" : "business";
   const [all, staff] = await Promise.all([
     loadDevices(),

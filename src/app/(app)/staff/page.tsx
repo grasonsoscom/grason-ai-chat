@@ -5,10 +5,11 @@ import { Badge, Field, PageHeader, Table, Tabs } from "@/components/ui";
 import { db } from "@/lib/db";
 import { formatDate } from "@/lib/format";
 import { deleteGroup, deleteRole, deleteStaff, saveGroup, saveRole, saveStaff } from "./actions";
-
-const MODULES = ["pesan", "pelanggan", "kalender", "whatsapp", "produk", "funnels", "broadcast", "audience", "staff", "ai-agent", "integrasi"];
+import { requirePageAccess } from "@/lib/auth";
+import { MODULES } from "@/lib/permissions";
 
 export default async function StaffPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  await requirePageAccess("staff");
   const tab = (await searchParams).tab ?? "staff";
   const [users, roles, groups] = await Promise.all([
     db.user.findMany({ include: { role: true, group: true }, orderBy: { createdAt: "asc" } }),

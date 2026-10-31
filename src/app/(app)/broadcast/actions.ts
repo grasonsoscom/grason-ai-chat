@@ -1,14 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { createCampaign, launchCampaign } from "@/lib/campaigns";
 import { optId, required, run, type ActionState } from "@/lib/action";
 
 export async function createBroadcast(_: ActionState, fd: FormData) {
   return run(async () => {
-    const user = await requireUser();
+    const user = await requirePermission("broadcast");
     const type = fd.get("type") === "Series" ? "Series" : "Single";
     const templateIds = fd.getAll("templateIds").map(Number).filter(Boolean);
     if (templateIds.length === 0) throw new Error("Pilih minimal satu template pesan.");
@@ -33,7 +33,7 @@ export async function createBroadcast(_: ActionState, fd: FormData) {
 
 export async function sendBroadcast(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("broadcast");
     // The UI keeps the historical "resend a partially failed broadcast" behavior.
     const result = await launchCampaign(Number(fd.get("id")), { allowResend: true });
     revalidatePath("/broadcast");
@@ -43,7 +43,7 @@ export async function sendBroadcast(_: ActionState, fd: FormData) {
 
 export async function deleteBroadcast(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("broadcast");
     await db.broadcast.delete({ where: { id: Number(fd.get("id")) } });
     revalidatePath("/broadcast");
     return "Broadcast dihapus.";

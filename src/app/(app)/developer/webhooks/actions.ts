@@ -7,18 +7,12 @@ import { required, run, str, type ActionState } from "@/lib/action";
 import { WEBHOOK_EVENT_KEYS } from "@/lib/webhooks/events";
 import { sendTestWebhook } from "@/lib/webhooks/dispatch";
 import { generateWebhookSecret } from "@/lib/webhooks/signature";
+import { assertSafeWebhookUrl } from "@/lib/webhooks/url-guard";
 
 const SUBSCRIBABLE = new Set(WEBHOOK_EVENT_KEYS.filter((event) => event !== "test.ping"));
 
-function parseUrl(raw: string): string {
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("protocol");
-    return url.toString();
-  } catch {
-    throw new Error("URL webhook harus diawali http:// atau https:// dan valid.");
-  }
-}
+// Throws a user-facing message for invalid or internal (SSRF) URLs.
+const parseUrl = assertSafeWebhookUrl;
 
 function parseEvents(fd: FormData): string[] {
   return [...new Set(fd.getAll("events").map(String).filter((event) => SUBSCRIBABLE.has(event)))];
@@ -28,7 +22,7 @@ export async function createWebhook(_: ActionState, fd: FormData) {
   return run(async () => {
     const user = await requireAdmin();
     const name = required(fd, "name", "Nama webhook");
-    const url = parseUrl(required(fd, "url", "URL webhook"));
+    const url = await parseUrl(required(fd, "url", "URL webhook"));
     const description = str(fd, "description");
     const events = parseEvents(fd);
     const enabled = fd.get("enabled") === "on";
@@ -58,7 +52,7 @@ export async function updateWebhook(_: ActionState, fd: FormData) {
     const existing = await db.webhookEndpoint.findUnique({ where: { id } });
     if (!existing) throw new Error("Webhook tidak ditemukan.");
     const name = required(fd, "name", "Nama webhook");
-    const url = parseUrl(required(fd, "url", "URL webhook"));
+    const url = await parseUrl(required(fd, "url", "URL webhook"));
     const description = str(fd, "description");
     const events = parseEvents(fd);
     const enabled = fd.get("enabled") === "on";

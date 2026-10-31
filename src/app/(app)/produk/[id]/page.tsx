@@ -8,8 +8,10 @@ import { db } from "@/lib/db";
 import { formatIDR } from "@/lib/format";
 import { imageUrl } from "@/lib/uploads";
 import { deleteImage, deleteVariant, saveGeneral, savePrompt, saveVariant } from "../actions";
+import { requirePageAccess } from "@/lib/auth";
 
 export default async function EditProductPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string }> }) {
+  await requirePageAccess("produk");
   const id = Number((await params).id);
   const tab = (await searchParams).tab ?? "umum";
   const p = await db.product.findUnique({ where: { id }, include: { images: true, variants: true } });

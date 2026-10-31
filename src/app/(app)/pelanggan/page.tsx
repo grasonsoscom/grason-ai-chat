@@ -5,8 +5,10 @@ import { Badge, EmptyState, Field, PageHeader, Table } from "@/components/ui";
 import { db } from "@/lib/db";
 import { formatDate } from "@/lib/format";
 import { deleteCustomer, saveCustomer } from "./actions";
+import { requirePageAccess } from "@/lib/auth";
 
 export default async function PelangganPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
+  await requirePageAccess("pelanggan");
   const q = ((await searchParams).q ?? "").trim();
   const [customers, labels, stages] = await Promise.all([
     db.customer.findMany({

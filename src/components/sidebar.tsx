@@ -3,42 +3,44 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import type { ModuleKey } from "@/lib/permissions";
 
-type NavItem = { href: string; label: string; icon: string; adminOnly?: boolean };
+// `module` hides the item unless the role has that module (see lib/permissions).
+type NavItem = { href: string; label: string; icon: string; adminOnly?: boolean; module?: ModuleKey };
 type NavGroup = { label?: string; items: NavItem[] };
 
 const GROUPS: NavGroup[] = [
   {
     items: [
-      { href: "/pesan", label: "Pesan", icon: "💬" },
-      { href: "/pelanggan", label: "Pelanggan", icon: "👥" },
-      { href: "/kalender", label: "Kalender", icon: "📅" },
+      { href: "/pesan", label: "Pesan", icon: "💬", module: "pesan" },
+      { href: "/pelanggan", label: "Pelanggan", icon: "👥", module: "pelanggan" },
+      { href: "/kalender", label: "Kalender", icon: "📅", module: "kalender" },
     ],
   },
   {
     label: "Messaging",
-    items: [{ href: "/whatsapp", label: "WhatsApp Business", icon: "📱" }],
+    items: [{ href: "/whatsapp", label: "WhatsApp Business", icon: "📱", module: "whatsapp" }],
   },
   {
     label: "Commerce",
     items: [
       { href: "/ongkir", label: "Cek Ongkir", icon: "🚚" },
-      { href: "/produk", label: "Produk", icon: "📦" },
-      { href: "/funnels", label: "Funnels", icon: "🪜" },
-      { href: "/broadcast", label: "Broadcast", icon: "📣" },
-      { href: "/audience", label: "Audience", icon: "🎯" },
+      { href: "/produk", label: "Produk", icon: "📦", module: "produk" },
+      { href: "/funnels", label: "Funnels", icon: "🪜", module: "funnels" },
+      { href: "/broadcast", label: "Broadcast", icon: "📣", module: "broadcast" },
+      { href: "/audience", label: "Audience", icon: "🎯", module: "audience" },
     ],
   },
   {
     label: "Team",
     items: [
-      { href: "/staff", label: "Staff", icon: "🧑‍💼" },
-      { href: "/ai-agent", label: "AI Agent", icon: "🤖" },
+      { href: "/staff", label: "Staff", icon: "🧑‍💼", module: "staff" },
+      { href: "/ai-agent", label: "AI Agent", icon: "🤖", module: "ai-agent" },
     ],
   },
   {
     label: "System",
-    items: [{ href: "/integrasi", label: "Integrasi", icon: "🔌" }],
+    items: [{ href: "/integrasi", label: "Integrasi", icon: "🔌", module: "integrasi" }],
   },
   {
     label: "Developer",
@@ -50,7 +52,7 @@ const GROUPS: NavGroup[] = [
   },
 ];
 
-export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
+export function Sidebar({ isAdmin = false, modules = [] }: { isAdmin?: boolean; modules?: ModuleKey[] }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -64,7 +66,9 @@ export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
         </div>
         <nav className="space-y-1 p-3">
           {GROUPS.map((group) => {
-            const items = group.items.filter((item) => !item.adminOnly || isAdmin);
+            const items = group.items.filter(
+              (item) => (!item.adminOnly || isAdmin) && (!item.module || modules.includes(item.module)),
+            );
             if (!items.length) return null;
             return (
               <div key={group.label ?? "main"} className="pb-1">

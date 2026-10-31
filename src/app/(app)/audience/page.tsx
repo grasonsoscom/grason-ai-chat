@@ -2,8 +2,10 @@ import { ActionButton, ActionForm, Modal, SubmitButton } from "@/components/form
 import { EmptyState, Field, PageHeader, Table } from "@/components/ui";
 import { db } from "@/lib/db";
 import { createAudience, deleteAudience, importAudience } from "./actions";
+import { requirePageAccess } from "@/lib/auth";
 
 export default async function AudiencePage() {
+  await requirePageAccess("audience");
   const [audiences, customers] = await Promise.all([
     db.audience.findMany({ include: { _count: { select: { customers: true } } }, orderBy: { createdAt: "desc" } }),
     db.customer.findMany({ select: { id: true, name: true, phone: true }, orderBy: { name: "asc" } }),

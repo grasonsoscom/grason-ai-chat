@@ -2,20 +2,20 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { num, optId, required, run, str, type ActionState } from "@/lib/action";
 import { removeImage, saveImage } from "@/lib/uploads";
 
 export async function createProduct() {
-  await requireUser();
+  await requirePermission("produk");
   const p = await db.product.create({ data: { name: "Produk baru" } });
   redirect(`/produk/${p.id}`);
 }
 
 export async function saveGeneral(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("produk");
     const id = Number(fd.get("id"));
     const files = fd.getAll("images").filter((f): f is File => f instanceof File && f.size > 0);
     // Validate every file before storing any, so a bad file doesn't leave a partial upload.
@@ -40,7 +40,7 @@ export async function saveGeneral(_: ActionState, fd: FormData) {
 
 export async function deleteImage(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("produk");
     const img = await db.productImage.delete({ where: { id: Number(fd.get("id")) } });
     await removeImage(img.fileName);
     revalidatePath(`/produk/${img.productId}`);
@@ -51,7 +51,7 @@ export async function deleteImage(_: ActionState, fd: FormData) {
 /** Adds a variant, or updates it when `id` is set. */
 export async function saveVariant(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("produk");
     const id = optId(fd, "id");
     const productId = Number(fd.get("productId"));
     const price = num(fd, "price");
@@ -70,7 +70,7 @@ export async function saveVariant(_: ActionState, fd: FormData) {
 
 export async function deleteVariant(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("produk");
     const v = await db.productVariant.delete({ where: { id: Number(fd.get("id")) } });
     revalidatePath(`/produk/${v.productId}`);
     return "Variasi dihapus.";
@@ -79,7 +79,7 @@ export async function deleteVariant(_: ActionState, fd: FormData) {
 
 export async function savePrompt(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("produk");
     const id = Number(fd.get("id"));
     await db.product.update({ where: { id }, data: { aiPrompt: str(fd, "aiPrompt") } });
     revalidatePath(`/produk/${id}`);
@@ -89,7 +89,7 @@ export async function savePrompt(_: ActionState, fd: FormData) {
 
 export async function deleteProduct(_: ActionState, fd: FormData) {
   return run(async () => {
-    await requireUser();
+    await requirePermission("produk");
     const id = Number(fd.get("id"));
     const imgs = await db.productImage.findMany({ where: { productId: id } });
     await db.product.delete({ where: { id } });

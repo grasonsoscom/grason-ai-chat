@@ -47,6 +47,8 @@ type RajaOngkirInfo = {
 
 type Props = {
   conversationId: number;
+  /** Non-admins cannot set discount or segment; see createOmsCheckout. */
+  isAdmin: boolean;
   customerName: string;
   customerPhone: string;
   defaultSegment: Segment;
@@ -78,6 +80,7 @@ const LEAD_TONE: Record<string, "slate" | "green" | "blue" | "amber" | "red" | "
 
 export function OmsOrderPanel({
   conversationId,
+  isAdmin,
   customerName,
   customerPhone,
   defaultSegment,
@@ -111,6 +114,7 @@ export function OmsOrderPanel({
             >
               <OmsCheckoutForm
                 conversationId={conversationId}
+                isAdmin={isAdmin}
                 customerName={customerName}
                 customerPhone={customerPhone}
                 defaultSegment={defaultSegment}
@@ -197,12 +201,14 @@ export function OmsOrderPanel({
 
 function OmsCheckoutForm({
   conversationId,
+  isAdmin,
   customerName,
   customerPhone,
   defaultSegment,
   rajaOngkir,
 }: {
   conversationId: number;
+  isAdmin: boolean;
   customerName: string;
   customerPhone: string;
   defaultSegment: Segment;
@@ -359,10 +365,14 @@ function OmsCheckoutForm({
             <option value="transfer">Transfer</option>
           </select>
         </Field>
-        <Field label="Segmen pelanggan" hint="Menentukan subsidi ongkir dan minimum order.">
+        <Field
+          label="Segmen pelanggan"
+          hint={isAdmin ? "Menentukan subsidi ongkir dan minimum order." : "Otomatis dari riwayat pelanggan. Hanya Admin yang bisa mengubah."}
+        >
           <select
             name="segmen"
             className="input"
+            disabled={!isAdmin}
             value={segmen}
             onChange={(event) => setSegmen(event.target.value as Segment)}
           >
@@ -371,7 +381,14 @@ function OmsCheckoutForm({
             ))}
           </select>
         </Field>
-        <Field label="Ongkir (Rp)" hint={rajaOngkir.enabled ? "Bisa diisi manual atau dicek lewat RajaOngkir." : undefined}>
+        <Field
+          label="Ongkir (Rp)"
+          hint={
+            isAdmin
+              ? rajaOngkir.enabled ? "Bisa diisi manual atau dicek lewat RajaOngkir." : undefined
+              : "Minimal sesuai ongkir J&T ke alamat penerima; dicek saat order dibuat."
+          }
+        >
           <input
             name="ongkir"
             type="number"
@@ -387,17 +404,19 @@ function OmsCheckoutForm({
             </button>
           )}
         </Field>
-        <Field label="Diskon (Rp)">
-          <input
-            name="diskon"
-            type="number"
-            min={0}
-            step={1}
-            value={diskon}
-            onChange={(event) => setDiskon(Number(event.target.value) || 0)}
-            className="input"
-          />
-        </Field>
+        {isAdmin && (
+          <Field label="Diskon (Rp)">
+            <input
+              name="diskon"
+              type="number"
+              min={0}
+              step={1}
+              value={diskon}
+              onChange={(event) => setDiskon(Number(event.target.value) || 0)}
+              className="input"
+            />
+          </Field>
+        )}
         <Field label="Nama penerima">
           <input name="nama" required defaultValue={customerName} className="input" />
         </Field>

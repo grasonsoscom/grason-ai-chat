@@ -4,8 +4,10 @@ import { ActionButton, ActionForm, Modal, SubmitButton } from "@/components/form
 import { Badge, EmptyState, Field, PageHeader, Tabs } from "@/components/ui";
 import { db } from "@/lib/db";
 import { addFunnel, addLabel, deleteFunnel, deleteLabel, deleteLevel, deleteStage, insertLevel, moveStage, saveStage } from "./actions";
+import { requirePageAccess } from "@/lib/auth";
 
 export default async function FunnelsPage({ searchParams }: { searchParams: Promise<{ tab?: string; f?: string }> }) {
+  await requirePageAccess("funnels");
   const sp = await searchParams;
   const tab = sp.tab === "labels" ? "labels" : "funnels";
   return (

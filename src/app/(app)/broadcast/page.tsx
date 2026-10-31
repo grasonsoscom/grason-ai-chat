@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { COIN_COSTS } from "@/lib/coins";
 import { formatDateTime } from "@/lib/format";
 import { createBroadcast, deleteBroadcast, sendBroadcast } from "./actions";
+import { requirePageAccess } from "@/lib/auth";
 
 type Opts = { devices: { id: number; label: string; templates: { id: number; name: string }[] }[]; audiences: { id: number; name: string; _count: { customers: number } }[] };
 
@@ -39,6 +40,7 @@ function BroadcastForm({ type, devices, audiences }: Opts & { type: "Single" | "
 }
 
 export default async function BroadcastPage() {
+  await requirePageAccess("broadcast");
   const [broadcasts, devices, audiences] = await Promise.all([
     db.broadcast.findMany({ include: { device: true, createdBy: true, audience: { include: { _count: { select: { customers: true } } } } }, orderBy: { updatedAt: "desc" } }),
     db.device.findMany({ select: { id: true, label: true, templates: { select: { id: true, name: true } } } }),

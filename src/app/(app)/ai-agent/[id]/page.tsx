@@ -6,6 +6,7 @@ import { ActionButton, ActionForm, SubmitButton } from "@/components/forms";
 import { Card, Field, Tabs } from "@/components/ui";
 import { db } from "@/lib/db";
 import { saveAgent, triggerFollowups } from "../actions";
+import { requirePageAccess } from "@/lib/auth";
 
 const BEHAVIOR = [
   { key: "informasi", label: "Informasi" },
@@ -17,6 +18,7 @@ const BEHAVIOR = [
 ];
 
 export default async function AgentDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; sub?: string }> }) {
+  await requirePageAccess("ai-agent");
   const id = Number((await params).id);
   const sp = await searchParams;
   const tab = sp.tab ?? "perilaku";

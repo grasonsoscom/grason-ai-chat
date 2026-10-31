@@ -5,8 +5,8 @@ import bcrypt from "bcryptjs";
 
 const db = new PrismaClient();
 
-// On Vercel the app is public: no known default passwords there.
-const ON_VERCEL = Boolean(process.env.VERCEL);
+// On Vercel or any production host the app is public: no known default passwords there.
+const ON_VERCEL = Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
 
 // Local test login (change via SEED_ADMIN_PASSWORD; required on Vercel).
 const ADMIN_EMAIL = "admin@centris.test";

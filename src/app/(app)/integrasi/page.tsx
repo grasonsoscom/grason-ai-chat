@@ -5,7 +5,7 @@ import { ActionButton, ActionForm, Modal, SubmitButton } from "@/components/form
 import { RajaOngkirSettingsForm } from "@/components/rajaongkir-settings-form";
 import { Badge, Field, PageHeader } from "@/components/ui";
 import { getAiStatus } from "@/lib/ai-settings";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, requirePageAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatDateTime } from "@/lib/format";
 import { getRajaOngkirStatus } from "@/lib/rajaongkir";
@@ -29,6 +29,7 @@ function IntegrationCard({ icon, name, description, status, action }: { icon: st
 const soon = <Badge tone="amber">COMING SOON</Badge>;
 
 export default async function IntegrasiPage() {
+  await requirePageAccess("integrasi");
   const acc = await db.account.findUniqueOrThrow({ where: { id: 1 } });
   const [reg, cargo] = await Promise.all([
     db.shippingRate.groupBy({ by: ["city", "district"], where: { service: "REG" } }),

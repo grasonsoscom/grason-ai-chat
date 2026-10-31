@@ -6,6 +6,7 @@ import type { WebhookEndpoint } from "@prisma/client";
 import { db } from "../db";
 import { eventMatches } from "./events";
 import { signWebhook } from "./signature";
+import { safePost } from "./url-guard";
 
 type Endpoint = Pick<WebhookEndpoint, "id" | "url" | "secret" | "events" | "enabled">;
 type DeliveryResult = { success: boolean; statusCode: number | null; error: string | null };
@@ -58,20 +59,21 @@ async function deliverOne(
   let error: string | null = null;
 
   try {
-    const response = await fetch(endpoint.url, {
-      method: "POST",
-      headers: {
+    // safePost blocks internal addresses and never follows redirects.
+    const response = await safePost(
+      endpoint.url,
+      {
         "Content-Type": "application/json",
         "X-Webhook-Event": event,
         "X-Webhook-Signature": signWebhook(endpoint.secret, timestamp, raw),
         "Idempotency-Key": eventId,
         "User-Agent": "GrasOn-Webhooks/1.0",
       },
-      body: raw,
-      signal: AbortSignal.timeout(5000),
-    });
+      raw,
+      5000,
+    );
     statusCode = response.status;
-    if (!response.ok) error = `HTTP ${response.status}`;
+    if (response.status < 200 || response.status >= 300) error = `HTTP ${response.status}`;
   } catch (e) {
     error = (e as Error).message;
   }

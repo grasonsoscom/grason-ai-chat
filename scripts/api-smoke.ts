@@ -1,7 +1,7 @@
 // End-to-end smoke test for /api/v1 against a throwaway SQLite DB.
 // Run:
 //   DATABASE_URL="file:./api-test.db" npx prisma db push --skip-generate
-//   DATABASE_URL="file:./api-test.db" npx tsx scripts/api-smoke.ts
+//   DATABASE_URL="file:./api-test.db" WEBHOOK_ALLOW_PRIVATE_URLS=true npx tsx scripts/api-smoke.ts
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { db } from "../src/lib/db";

@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "./db";
+import { canAccess, type ModuleKey } from "./permissions";
 import { SESSION_COOKIE, verifySession } from "./session";
 
 export async function getCurrentUser() {
@@ -21,5 +22,19 @@ export async function requireUser() {
 export async function requireAdmin() {
   const user = await requireUser();
   if (user.role.name !== "Admin") throw new Error("Hanya Admin yang dapat melakukan aksi ini.");
+  return user;
+}
+
+/** For server actions: throws a readable message when the role lacks the module. */
+export async function requirePermission(module: ModuleKey) {
+  const user = await requireUser();
+  if (!canAccess(user.role, module)) throw new Error("Anda tidak punya akses ke modul ini.");
+  return user;
+}
+
+/** For pages: sends users without the module to the access-denied page. */
+export async function requirePageAccess(module: ModuleKey) {
+  const user = await requireUser();
+  if (!canAccess(user.role, module)) redirect("/akses-ditolak");
   return user;
 }

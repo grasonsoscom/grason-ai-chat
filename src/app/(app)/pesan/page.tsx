@@ -11,6 +11,8 @@ import { formatTime, timeAgo } from "@/lib/format";
 import { HUB_API_TYPE, insideServiceWindow, isConfigured } from "@/lib/whatsapp";
 import { requestAiReply, sendMessage, simulateInbound, updateConversation } from "./actions";
 import { AiToggle } from "./ai-toggle";
+import { requirePageAccess } from "@/lib/auth";
+import { isAdminRole } from "@/lib/permissions";
 
 type SP = Promise<{ view?: string; tab?: string; q?: string; c?: string }>;
 
@@ -21,6 +23,8 @@ const MODE_BADGE = {
 } as Record<string, React.ReactNode>;
 
 export default async function PesanPage({ searchParams }: { searchParams: SP }) {
+  const me = await requirePageAccess("pesan");
+  const isAdmin = isAdminRole(me.role);
   const sp = await searchParams;
   const view = sp.view === "kanban" ? "kanban" : "daftar";
   const tab = ["staf", "eskalasi"].includes(sp.tab ?? "") ? sp.tab! : "semua";
@@ -118,14 +122,14 @@ export default async function PesanPage({ searchParams }: { searchParams: SP }) 
             })}
           </ul>
           <section className="hidden min-h-0 md:flex md:flex-col">
-            {sp.c ? <ConversationPanel id={Number(sp.c)} /> : (
+            {sp.c ? <ConversationPanel id={Number(sp.c)} isAdmin={isAdmin} /> : (
               <div className="flex flex-1 items-center justify-center text-sm text-slate-400">Pilih percakapan untuk melihat detail</div>
             )}
           </section>
         </div>
       )}
       {sp.c && view === "daftar" && (
-        <div className="mt-4 md:hidden"><div className="flex h-[70vh] flex-col rounded-xl border border-slate-200 bg-white"><ConversationPanel id={Number(sp.c)} /></div></div>
+        <div className="mt-4 md:hidden"><div className="flex h-[70vh] flex-col rounded-xl border border-slate-200 bg-white"><ConversationPanel id={Number(sp.c)} isAdmin={isAdmin} /></div></div>
       )}
     </div>
   );
@@ -159,7 +163,7 @@ async function Kanban({ convs, link }: { convs: ConvRow[]; link: (p: Record<stri
   );
 }
 
-async function ConversationPanel({ id }: { id: number }) {
+async function ConversationPanel({ id, isAdmin }: { id: number; isAdmin: boolean }) {
   const conv = await db.conversation.findUnique({
     where: { id },
     include: { customer: true, device: { include: { templates: true } }, messages: { orderBy: { createdAt: "asc" } } },
@@ -209,6 +213,7 @@ async function ConversationPanel({ id }: { id: number }) {
 
         <OmsOrderPanel
           conversationId={id}
+          isAdmin={isAdmin}
           customerName={conv.customer.name}
           customerPhone={conv.customer.phone}
           defaultSegment={defaultSegment}

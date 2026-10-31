@@ -3,8 +3,10 @@ import { ActionButton } from "@/components/forms";
 import { Badge, EmptyState, PageHeader } from "@/components/ui";
 import { db } from "@/lib/db";
 import { createAgent, deleteAgent } from "./actions";
+import { requirePageAccess } from "@/lib/auth";
 
 export default async function AiAgentListPage() {
+  await requirePageAccess("ai-agent");
   const agents = await db.aiAgent.findMany({ include: { devices: true, _count: { select: { products: true } } }, orderBy: { id: "asc" } });
   const addBtn = <form action={createAgent}><button className="btn btn-primary">+ Buat AI Agent</button></form>;
   return (

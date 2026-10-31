@@ -4,10 +4,12 @@ import { Field, PageHeader } from "@/components/ui";
 import { db } from "@/lib/db";
 import { formatTime } from "@/lib/format";
 import { deleteEvent, saveEvent } from "./actions";
+import { requirePageAccess } from "@/lib/auth";
 
 const DAYS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 
 export default async function KalenderPage({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
+  await requirePageAccess("kalender");
   const m = (await searchParams).m;
   const now = new Date();
   const [y, mo] = m && /^\d{4}-\d{2}$/.test(m) ? m.split("-").map(Number) : [now.getFullYear(), now.getMonth() + 1];

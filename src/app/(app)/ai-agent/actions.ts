@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireAdmin, requireUser } from "@/lib/auth";
+import { requireAdmin, requirePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { generateReply, type ChatTurn } from "@/lib/ai";
 import { assertCoins, COIN_COSTS, spendCoins } from "@/lib/coins";
@@ -86,7 +86,7 @@ export async function saveAgent(_: ActionState, fd: FormData) {
 }
 
 export async function testAgentReply(agentId: number, turns: ChatTurn[], overrides?: { description?: string; personality?: string }) {
-  await requireUser();
+  await requirePermission("ai-agent");
   try {
     await assertCoins(COIN_COSTS.aiReply);
     const reply = await generateReply(agentId, turns, overrides);
