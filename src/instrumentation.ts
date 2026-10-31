@@ -5,5 +5,8 @@ export async function register() {
     // Reconnect WhatsApp Hub numbers linked by QR before the first request.
     const { restoreHubSessions } = await import("./lib/wa-hub");
     await restoreHubSessions().catch(() => {});
+    // Sends delayed AI replies (agents with a reply delay) once they are due.
+    const { startAiReplySweeper } = await import("./lib/ai-delay");
+    startAiReplySweeper();
   }
 }

@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { cancelAiReply, randomDelaySec, scheduleAiReply } from "./ai-delay";
 import { customerSegment } from "./promo";
 import { generateReply, type ChatTurn } from "./ai";
 import { assertCoins, spendCoins, COIN_COSTS } from "./coins";
@@ -98,6 +99,15 @@ export async function recordInbound(input: {
   await omsOnInbound(conv.id, input.attribution);
 
   if (conv.mode !== "ai") return { conversationId: conv.id, ai: "skipped" as const };
+
+  // Agents with a reply delay answer later, like a person would; the sweeper
+  // in ai-delay.ts sends it (one reply for all messages sent meanwhile).
+  const agent = await findAgentForDevice(conv.deviceId);
+  const delaySec = agent ? randomDelaySec(agent.replyDelayMinSec, agent.replyDelayMaxSec) : 0;
+  if (delaySec > 0) {
+    await scheduleAiReply(conv.id, delaySec);
+    return { conversationId: conv.id, ai: "scheduled" as const };
+  }
   return { conversationId: conv.id, ai: await aiRespond(conv.id) };
 }
 
@@ -244,6 +254,8 @@ export async function sendStaffMessage(conversationId: number, text: string) {
   if (!insideServiceWindow(conv.lastInboundAt)) {
     throw new Error("Di luar jendela 24 jam. Kirim pesan template untuk memulai ulang percakapan.");
   }
+  // A manual reply answers the customer; a delayed AI reply on top would be odd.
+  await cancelAiReply(conversationId);
   const result = await deliver(conversationId, text, "staff");
   if (result.status === "failed") throw new Error(result.error ?? "Pesan gagal terkirim.");
 }

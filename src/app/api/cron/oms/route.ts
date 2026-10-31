@@ -1,3 +1,4 @@
+import { processDueAiReplies } from "@/lib/ai-delay";
 import { pollOpenOrders } from "@/lib/oms/orders";
 import { processOutbox } from "@/lib/oms/outbox";
 import { processPendingOmsEvents } from "@/lib/oms/webhook";
@@ -15,7 +16,12 @@ async function run() {
     console.error("[oms] order polling failed:", (e as Error).message);
     return 0;
   });
-  return Response.json({ outbox, events, polled });
+  // Fallback for delayed AI replies when no in-process sweeper runs (serverless).
+  const aiReplies = await processDueAiReplies(20).catch((e) => {
+    console.error("[ai-delay] cron sweep failed:", (e as Error).message);
+    return 0;
+  });
+  return Response.json({ outbox, events, polled, aiReplies });
 }
 
 /** External scheduler: POST with x-webhook-secret (e.g. every 15 minutes). */

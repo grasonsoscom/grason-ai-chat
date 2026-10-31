@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireAdmin, requirePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { MAX_REPLY_DELAY_SEC } from "@/lib/ai-delay";
 import { generateReply, type ChatTurn } from "@/lib/ai";
 import { assertCoins, COIN_COSTS, spendCoins } from "@/lib/coins";
 import { runFollowups } from "@/lib/messaging";
@@ -47,7 +48,13 @@ export async function saveAgent(_: ActionState, fd: FormData) {
       case "pengaturan": {
         const max = num(fd, "maxReplyChars");
         if (max < 50 || max > 4000) throw new Error("Panjang balasan harus antara 50 dan 4000 karakter.");
-        data = { active: on("active"), maxReplyChars: max };
+        const delayMin = Math.round(num(fd, "replyDelayMinMin") * 60);
+        const delayMax = Math.round(num(fd, "replyDelayMaxMin") * 60);
+        if (delayMin < 0 || delayMax < 0 || delayMax > MAX_REPLY_DELAY_SEC) {
+          throw new Error("Jeda balasan harus antara 0 dan 5 menit.");
+        }
+        if (delayMin > delayMax) throw new Error("Jeda minimum tidak boleh lebih besar dari jeda maksimum.");
+        data = { active: on("active"), maxReplyChars: max, replyDelayMinSec: delayMin, replyDelayMaxSec: delayMax };
         break;
       }
       case "eskalasi":

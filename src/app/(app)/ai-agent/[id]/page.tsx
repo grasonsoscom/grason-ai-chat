@@ -78,6 +78,17 @@ export default async function AgentDetailPage({ params, searchParams }: { params
       <Section section="pengaturan">
         <label className="mb-4 flex items-center gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={agent.active} /> Agen aktif (membalas pesan otomatis)</label>
         <Field label="Panjang balasan maksimal (karakter)"><input name="maxReplyChars" type="number" min={50} max={4000} defaultValue={agent.maxReplyChars} className="input max-w-40" /></Field>
+        <Field
+          label="Jeda balasan acak (menit)"
+          hint="AI menunggu waktu acak di rentang ini sebelum membalas, seperti CS manusia. Pesan yang masuk selama menunggu dijawab sekaligus. Isi 0 dan 0 untuk membalas langsung. Maksimal 5 menit."
+        >
+          <div className="flex items-center gap-2">
+            <input name="replyDelayMinMin" type="number" min={0} max={5} step={0.5} defaultValue={agent.replyDelayMinSec / 60} className="input max-w-24" aria-label="Jeda minimum (menit)" />
+            <span className="text-sm text-slate-500">sampai</span>
+            <input name="replyDelayMaxMin" type="number" min={0} max={5} step={0.5} defaultValue={agent.replyDelayMaxSec / 60} className="input max-w-24" aria-label="Jeda maksimum (menit)" />
+            <span className="text-sm text-slate-500">menit</span>
+          </div>
+        </Field>
       </Section>
     );
     else if (sub === "order") body = (

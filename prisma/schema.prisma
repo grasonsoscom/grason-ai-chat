@@ -165,6 +165,8 @@ model Conversation {
   lastMessageAt   DateTime  @default(now())
   lastInboundAt   DateTime?
   lastFollowupAt  DateTime?
+  // When a delayed AI reply is due (see lib/ai-delay.ts); null = none pending.
+  aiReplyDueAt    DateTime?
   messages        Message[]
 
   // OMS GRASON integration (see docs/oms/INTEGRASI-OMS-GRASON.md).
@@ -299,6 +301,10 @@ model AiAgent {
   personality        String    @default("")
   active             Boolean   @default(true)
   maxReplyChars      Int       @default(600)
+  // Random wait before an AI reply (seconds, 0 = reply at once). Messages that
+  // arrive during the wait are answered together in one reply.
+  replyDelayMinSec   Int       @default(0)
+  replyDelayMaxSec   Int       @default(0)
   escalationEnabled  Boolean   @default(false)
   escalationKeywords String    @default("") // comma separated
   escalationMessage  String    @default("")
