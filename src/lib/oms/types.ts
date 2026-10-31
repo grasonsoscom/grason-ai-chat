@@ -88,6 +88,12 @@ export interface OrderBaru {
   catatan?: string;
 }
 
+/** cs-ai.v3 PATCH /orders/{id}/alamat. Ongkir and COD stay as they are. */
+export interface KoreksiAlamat {
+  penerima?: { nama?: string; no_wa?: string };
+  alamat: Alamat;
+}
+
 export interface Verifikasi {
   dikonfirmasi_at: string;
   nilai_cod_dikonfirmasi: number;

@@ -1,5 +1,7 @@
 # Integrasi SaaS CS AI ↔ OMS GRASON
 
+> **Update v3:** kontrak aktif sekarang `cs-ai.v3.yaml` (`/api/v3`) = v2 + pembatalan dan koreksi alamat. Lihat `V3-NOTES.md`.
+>
 > **Update v2:** kontrak aktif sekarang `cs-ai.v2.yaml` (`/api/v2`). Lihat `V2-NOTES.md`
 > untuk `total`, subsidi COD, dan `segmen`. Panduan ini tetap berlaku untuk lead,
 > verifikasi, dan webhook; v1 masih diterima OMS untuk klien lama.

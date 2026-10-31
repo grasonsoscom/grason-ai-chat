@@ -11,7 +11,8 @@ import { omsOnFirstResponse, omsOnFollowUp, omsOnHandover, omsOnInbound } from "
 import type { AttributionInput } from "./oms/lead-store";
 import { getOmsCatalog } from "./oms/catalog";
 import { omsConfigured } from "./oms/client";
-import { detectOrderRequest, isOrderLookup, OPEN_ORDER_STATUSES, orderRequestReply } from "./oms/customer-intents";
+import { isOrderLookup } from "./oms/customer-intents";
+import { handleOrderChange } from "./oms/order-changes";
 import { orderLookupContext } from "./oms/messages";
 import {
   buildOrderContext,
@@ -136,25 +137,18 @@ export async function aiRespond(conversationId: number): Promise<string> {
     }
   }
 
-  // Cancel / address change on an open order is not in the CS-AI contract:
-  // hand it to staff instead of letting the AI promise anything.
-  const request = lastIn ? detectOrderRequest(lastIn.text) : null;
-  if (request) {
-    const open = await db.omsOrder.findFirst({
-      where: { conversationId, status: { in: OPEN_ORDER_STATUSES } },
+  // Cancel / address change on an open order: confirmed in chat, then sent to
+  // OMS (cs-ai.v3); orders already at the warehouse go to staff.
+  if (lastIn && omsConfigured()) {
+    const lastAi = await db.message.findFirst({
+      where: { conversationId, direction: "out", sender: "ai" },
       orderBy: { createdAt: "desc" },
+      select: { text: true },
     });
-    if (open) {
-      const label = request === "cancel" ? "pembatalan" : "perubahan alamat";
-      await db.conversation.update({ where: { id: conversationId }, data: { mode: "eskalasi", modeChangedAt: new Date() } });
-      await addSystemNote(
-        conversationId,
-        `Pelanggan meminta ${label} pesanan ${open.nomor} (status ${open.status}). Proses di OMS lalu kabari pelanggan.`,
-      );
-      await omsOnHandover(conversationId, `Pelanggan meminta ${label} pesanan ${open.nomor}`);
-      await deliver(conversationId, orderRequestReply(request, open.nomor), "ai");
-      await emitWebhook("conversation.escalated", { conversation_id: conversationId, keyword: request });
-      return "escalated";
+    try {
+      if (await handleOrderChange(conversationId, lastIn.text, lastAi?.text ?? "")) return "order_change";
+    } catch (e) {
+      await addSystemNote(conversationId, `Perubahan order lewat chat gagal diproses: ${(e as Error).message}`);
     }
   }
 

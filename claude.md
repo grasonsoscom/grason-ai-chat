@@ -51,4 +51,4 @@ Ini penting karena teks di field **Deskripsi** AI Agent langsung memengaruhi bal
 
 ## Integrasi OMS GRASON
 
-Integrasi ke OMS GRASON wajib mengikuti docs/oms/INTEGRASI-OMS-GRASON.md, docs/oms/cs-ai.v2.yaml (kontrak aktif), dan docs/oms/V2-NOTES.md. cs-ai.v1.yaml disimpan sebagai referensi; endpoint aktif adalah /api/v2.
+Integrasi ke OMS GRASON wajib mengikuti docs/oms/INTEGRASI-OMS-GRASON.md, docs/oms/cs-ai.v3.yaml (kontrak aktif), docs/oms/V2-NOTES.md, dan docs/oms/V3-NOTES.md. cs-ai.v1.yaml dan cs-ai.v2.yaml disimpan sebagai referensi; endpoint aktif adalah /api/v3.

@@ -83,7 +83,7 @@ function catalogLines(catalog: OmsCatalog) {
     .join("\n");
 }
 
-function extractJson(text: string): unknown {
+export function extractJson(text: string): unknown {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) throw new Error("JSON tidak ditemukan.");

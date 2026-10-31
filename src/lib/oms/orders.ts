@@ -278,6 +278,11 @@ export async function syncOrder(orderRowId: number) {
   return order;
 }
 
+/** Applies an order returned by OMS (poll, or a change made from chat) like a status event. */
+export function applyOrderSnapshot(orderRowId: number, order: Order, source: "poll" | "chat") {
+  return applyStatusEvent(orderRowId, pollEvent(order), { source });
+}
+
 /** A polled order expressed as a status event (no reason: polling cannot know it). */
 function pollEvent(order: Order): EventStatusOrder {
   return {
@@ -346,7 +351,7 @@ function storedResi(pengirimanJson: string | null) {
 export async function applyStatusEvent(
   orderRowId: number,
   event: EventStatusOrder,
-  opts: { source?: "webhook" | "poll" } = {},
+  opts: { source?: "webhook" | "poll" | "chat" } = {},
 ) {
   const row = await db.omsOrder.findUniqueOrThrow({ where: { id: orderRowId } });
   const occurred = new Date(event.terjadi_at);
@@ -355,7 +360,7 @@ export async function applyStatusEvent(
   const problem = PROBLEM_REASONS.has(event.data.alasan ?? "");
   const stale = Boolean(row.lastEventAt && occurred <= row.lastEventAt);
   const regression = isStatusRegression(row.status, event.data.status);
-  if ((stale || regression) && !(problem && opts.source !== "poll")) return { ignored: true as const };
+  if ((stale || regression) && !(problem && (opts.source ?? "webhook") === "webhook")) return { ignored: true as const };
 
   const statusChanged = !stale && !regression && row.status !== event.data.status;
   const resiNew = Boolean(event.data.resi) && event.data.resi !== storedResi(row.pengirimanJson);
@@ -382,7 +387,7 @@ export async function applyStatusEvent(
   await addSystemNote(
     row.conversationId,
     `Status order ${row.nomor}: ${event.data.status}${event.data.alasan ? ` (${event.data.alasan})` : ""}${
-      opts.source === "poll" ? " (dari sinkronisasi OMS)" : ""
+      opts.source === "poll" ? " (dari sinkronisasi OMS)" : opts.source === "chat" ? " (atas permintaan pelanggan lewat chat)" : ""
     }.`,
   );
 

@@ -4,6 +4,7 @@ import type {
   Checkout,
   Galat,
   Harga,
+  KoreksiAlamat,
   Lead,
   LeadBaru,
   ListResponse,
@@ -172,6 +173,16 @@ export function createOrder(input: OrderBaru) {
 
 export function verifyOrder(id: string, input: Verifikasi) {
   return omsRequest<Order>(`/orders/${encodeURIComponent(id)}/verifikasi`, { method: "POST", body: input, retries: 2 });
+}
+
+/** cs-ai.v3 only (OMS_BASE_URL …/api/v3). Idempotent for an order that is already batal. */
+export function cancelOrder(id: string, alasan: string) {
+  return omsRequest<Order>(`/orders/${encodeURIComponent(id)}/batal`, { method: "POST", body: { alasan }, retries: 2 });
+}
+
+/** cs-ai.v3 only. Allowed while the order is baru/terverifikasi; ongkir is not recalculated. */
+export function correctOrderAddress(id: string, input: KoreksiAlamat) {
+  return omsRequest<Order>(`/orders/${encodeURIComponent(id)}/alamat`, { method: "PATCH", body: input, retries: 2 });
 }
 
 export function getOrder(id: string) {

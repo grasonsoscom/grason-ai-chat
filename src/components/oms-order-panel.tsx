@@ -16,6 +16,8 @@ import {
   createOmsCheckout,
   markLeadFailed,
   refreshOmsOrder,
+  cancelOmsOrderByStaff,
+  correctOmsAddressByStaff,
   retryOmsCheckout,
   verifyOmsOrder,
 } from "@/app/(app)/pesan/actions";
@@ -202,6 +204,37 @@ export function OmsOrderPanel({
                 {formatIDR(order.biayaCod)} · Subsidi admin {formatIDR(order.subsidiAdminCod)}
                 {order.segmen ? ` · ${SEGMENT_LABEL[order.segmen as Segment] ?? order.segmen}` : ""}
               </p>
+
+              {(order.status === "baru" || order.status === "terverifikasi") && (
+                <div className="mt-2 flex flex-wrap gap-2 border-t border-slate-100 pt-2">
+                  <Modal trigger="Ubah alamat" title={`Ubah alamat ${order.nomor}`} triggerClass="btn btn-ghost text-xs">
+                    <p className="mb-3 text-xs text-amber-700">
+                      Ongkir dan nilai COD tidak dihitung ulang. Jika pindah kota, sebaiknya batalkan lalu buat order baru.
+                    </p>
+                    <ActionForm action={correctOmsAddressByStaff}>
+                      <input type="hidden" name="orderId" value={order.id} />
+                      <Field label="Nama penerima (kosongkan jika tetap)"><input name="nama" className="input" /></Field>
+                      <Field label="Alamat (jalan, nomor, RT/RW) *"><input name="alamat" required className="input" /></Field>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <Field label="Kelurahan"><input name="kelurahan" className="input" /></Field>
+                        <Field label="Kecamatan"><input name="kecamatan" className="input" /></Field>
+                        <Field label="Kota/Kabupaten *"><input name="kota" required className="input" /></Field>
+                        <Field label="Provinsi *"><input name="provinsi" required className="input" /></Field>
+                        <Field label="Kode pos"><input name="kode_pos" inputMode="numeric" className="input" /></Field>
+                      </div>
+                      <SubmitButton>Simpan alamat</SubmitButton>
+                    </ActionForm>
+                  </Modal>
+                  <ActionButton
+                    action={cancelOmsOrderByStaff}
+                    fields={{ orderId: order.id }}
+                    confirm={`Batalkan order ${order.nomor} di OMS? Tindakan ini tidak bisa dikembalikan.`}
+                    className="btn btn-ghost text-xs text-red-600"
+                  >
+                    Batalkan order
+                  </ActionButton>
+                </div>
+              )}
 
               {order.status === "baru" && !order.perluVerifikasiManusia && (
                 <div className="mt-2 border-t border-slate-100 pt-2">

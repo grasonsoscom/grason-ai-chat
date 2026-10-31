@@ -14,12 +14,12 @@ import { isAdminRole } from "@/lib/permissions";
 import { emitWebhook } from "@/lib/webhook";
 import { customerSegment, orderQuote, regionFromText, type Segment } from "@/lib/promo";
 import { getOmsCatalog } from "@/lib/oms/catalog";
-import { OmsApiError, omsConfigured } from "@/lib/oms/client";
+import { cancelOrder, correctOrderAddress, OmsApiError, omsConfigured } from "@/lib/oms/client";
 import { friendlyOmsError } from "@/lib/oms/errors";
 import { omsMarkFailed, omsOnHandover } from "@/lib/oms/lead";
 import { orderFingerprint, staffCheckoutExternalId, storedFingerprint } from "@/lib/oms/dedupe";
 import { assertRupiah, isRetryableStatus, isoUtc, normalizePhone } from "@/lib/oms/normalize";
-import { submitCheckout, submitVerification, syncOrder } from "@/lib/oms/orders";
+import { applyOrderSnapshot, submitCheckout, submitVerification, syncOrder } from "@/lib/oms/orders";
 import { processOutbox } from "@/lib/oms/outbox";
 import { enqueueCheckoutSend, enqueueOmsJob } from "@/lib/oms/queue";
 import type { ItemBaru, MetodeBayar, OrderBaru, Verifikasi } from "@/lib/oms/types";
@@ -430,6 +430,65 @@ export async function retryOmsCheckout(_: ActionState, fd: FormData) {
     after(() => processOutbox().catch((e) => console.error("[oms] outbox kick failed:", (e as Error).message)));
     revalidatePath("/pesan");
     return "Pesanan dicoba ulang ke OMS. Nomor order muncul setelah OMS merespons.";
+  });
+}
+
+/** Staff cancels an order in OMS (cs-ai.v3) without opening OMS. */
+export async function cancelOmsOrderByStaff(_: ActionState, fd: FormData) {
+  return run(async () => {
+    const me = await requirePermission("pesan");
+    const order = await db.omsOrder.findUnique({ where: { id: Number(fd.get("orderId")) } });
+    if (!order) throw new Error("Order tidak ditemukan.");
+    const alasan = str(fd, "alasan") || `Dibatalkan oleh ${me.name} dari CRM`;
+    try {
+      const updated = await cancelOrder(order.omsOrderId, alasan);
+      await applyOrderSnapshot(order.id, updated, "chat");
+    } catch (e) {
+      throw new Error(friendlyOmsError(e));
+    }
+    await addSystemNote(order.conversationId, `Order ${order.nomor} dibatalkan oleh ${me.name}: ${alasan}`);
+    revalidatePath("/pesan");
+    return `Order ${order.nomor} dibatalkan.`;
+  });
+}
+
+/** Staff corrects the address in OMS. Ongkir/COD are not recalculated (OMS decision 0007). */
+export async function correctOmsAddressByStaff(_: ActionState, fd: FormData) {
+  return run(async () => {
+    const me = await requirePermission("pesan");
+    const order = await db.omsOrder.findUnique({ where: { id: Number(fd.get("orderId")) } });
+    if (!order) throw new Error("Order tidak ditemukan.");
+    const kode_pos = str(fd, "kode_pos");
+    if (kode_pos && !/^\d{5}$/.test(kode_pos)) throw new Error("Kode pos harus 5 digit.");
+    const alamat = {
+      alamat: required(fd, "alamat", "Alamat"),
+      ...(str(fd, "kelurahan") ? { kelurahan: str(fd, "kelurahan") } : {}),
+      ...(str(fd, "kecamatan") ? { kecamatan: str(fd, "kecamatan") } : {}),
+      kota: required(fd, "kota", "Kota"),
+      provinsi: required(fd, "provinsi", "Provinsi"),
+      ...(kode_pos ? { kode_pos } : {}),
+    };
+    const nama = str(fd, "nama");
+    try {
+      await correctOrderAddress(order.omsOrderId, { alamat, ...(nama ? { penerima: { nama } } : {}) });
+    } catch (e) {
+      throw new Error(friendlyOmsError(e));
+    }
+    const checkout = await db.omsCheckout.findUnique({ where: { id: order.checkoutId }, select: { payload: true } });
+    if (checkout) {
+      try {
+        const payload = JSON.parse(checkout.payload) as OrderBaru;
+        await db.omsCheckout.update({
+          where: { id: order.checkoutId },
+          data: { payload: JSON.stringify({ ...payload, alamat, penerima: nama ? { ...payload.penerima, nama } : payload.penerima }) },
+        });
+      } catch {
+        // OMS is updated; a broken local payload only affects reports.
+      }
+    }
+    await addSystemNote(order.conversationId, `Alamat order ${order.nomor} diubah oleh ${me.name}.`);
+    revalidatePath("/pesan");
+    return `Alamat ${order.nomor} diperbarui. Ongkir dan nilai COD tidak berubah.`;
   });
 }
 
