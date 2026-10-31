@@ -1,7 +1,9 @@
 // Durable worker for OMS writes. The webhook routes and cron call this; server
 // actions can also kick it with after(). A failed job never loses customer data.
 import { db } from "../db";
-import { addSystemNote } from "../outbound";
+import { addSystemNote, deliver, deliverTemplate } from "../outbound";
+import { insideServiceWindow } from "../whatsapp";
+import { codReminderText } from "./messages";
 import { friendlyOmsError } from "./errors";
 import { OmsApiError, OmsNetworkError, getLead, updateLead } from "./client";
 import { ensureLeadId, storeLeadSnapshot } from "./lead-store";
@@ -175,9 +177,61 @@ async function runJob(kind: OmsJobKind, rawPayload: string) {
       return;
     }
 
+    case "cod_reminder": {
+      const { orderId } = parsePayload<{ orderId: number }>(rawPayload);
+      await sendCodReminder(orderId);
+      return;
+    }
+
     default:
       throw new Error(`Jenis job OMS tidak dikenal: ${kind}`);
   }
+}
+
+/** Template (per device) used for the COD reminder outside the 24h window. */
+export const COD_REMINDER_TEMPLATE = "pengingat_cod";
+
+/**
+ * Reminds the buyer to prepare the COD cash while the parcel is still on the
+ * way. Inside the 24h window it is a free-form text with the amount; outside
+ * it, a Meta-approved template named "pengingat_cod" on the device is used,
+ * or staff get a note when there is none.
+ */
+async function sendCodReminder(orderId: number) {
+  const order = await db.omsOrder.findUnique({ where: { id: orderId } });
+  if (!order || order.status !== "dikirim" || order.metodeBayar !== "cod") return; // delivered, returned or cancelled meanwhile
+
+  const conv = await db.conversation.findUnique({
+    where: { id: order.conversationId },
+    select: { lastInboundAt: true, deviceId: true },
+  });
+  if (!conv) return;
+
+  let resi: string | null = null;
+  try {
+    resi = order.pengirimanJson ? ((JSON.parse(order.pengirimanJson) as { resi?: string }).resi ?? null) : null;
+  } catch {
+    resi = null;
+  }
+  const text = codReminderText(order.nomor, order.nilaiCod, resi);
+
+  if (insideServiceWindow(conv.lastInboundAt)) {
+    const sent = await deliver(order.conversationId, text, "staff");
+    if (sent.status === "failed") throw new Error(sent.error ?? "Pengingat COD gagal terkirim.");
+    return;
+  }
+  const template = conv.deviceId
+    ? await db.messageTemplate.findFirst({ where: { deviceId: conv.deviceId, name: COD_REMINDER_TEMPLATE } })
+    : null;
+  if (!template) {
+    await addSystemNote(
+      order.conversationId,
+      `Pengingat COD ${order.nomor} tidak terkirim: di luar jendela 24 jam dan template "${COD_REMINDER_TEMPLATE}" belum ada di perangkat ini. Isi pesan: ${text}`,
+    );
+    return;
+  }
+  const sent = await deliverTemplate(order.conversationId, template.id);
+  if (sent.status === "failed") throw new Error(sent.error ?? "Template pengingat COD gagal terkirim.");
 }
 
 async function writeFailureNote(kind: OmsJobKind, rawPayload: string, e: unknown) {
@@ -200,6 +254,12 @@ async function writeFailureNote(kind: OmsJobKind, rawPayload: string, e: unknown
         row.conversationId,
         `Pembuatan order OMS gagal setelah beberapa percobaan: ${message} Status di OMS belum pasti; tekan "Coba ulang" (aman, tidak dobel) sebelum membuat order baru.`,
       );
+      return;
+    }
+    if (kind === "cod_reminder") {
+      const { orderId } = parsePayload<{ orderId: number }>(rawPayload);
+      const row = await db.omsOrder.findUnique({ where: { id: orderId } });
+      if (row) await addSystemNote(row.conversationId, `Pengingat COD ${row.nomor} gagal dikirim: ${(e as Error).message}`);
       return;
     }
     if (kind === "verify_order") {

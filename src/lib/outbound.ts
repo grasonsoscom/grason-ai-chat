@@ -2,7 +2,7 @@
 // Kept separate from messaging.ts so OMS modules can send messages without
 // creating an import cycle.
 import { db } from "./db";
-import { sendTextVia } from "./channel";
+import { sendTemplateVia, sendTextVia } from "./channel";
 import { emitWebhook } from "./webhook";
 import { insideServiceWindow } from "./whatsapp";
 import { omsOnFirstResponse } from "./oms/lead";
@@ -38,6 +38,27 @@ export async function deliver(
     conversation_id: conversationId,
     message_id: message.id,
     sender,
+    body: text,
+    status: result.status,
+  });
+  await omsOnFirstResponse(conversationId);
+  return { ...result, messageId: message.id };
+}
+
+/** Sends a stored template (Meta template on Cloud API, plain text on Hub) and logs it. */
+export async function deliverTemplate(conversationId: number, templateId: number): Promise<OutboundResult> {
+  const conv = await db.conversation.findUniqueOrThrow({ where: { id: conversationId }, include: { customer: true, device: true } });
+  const tpl = await db.messageTemplate.findUniqueOrThrow({ where: { id: templateId } });
+  const text = `[Template: ${tpl.name}] ${tpl.body}`;
+  const result = await sendTemplateVia(conv.device, conv.customer.phone, tpl);
+  const message = await db.message.create({
+    data: { conversationId, direction: "out", sender: "staff", text, status: result.status, externalId: result.externalId },
+  });
+  await db.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: new Date() } });
+  await emitWebhook("message.sent", {
+    conversation_id: conversationId,
+    message_id: message.id,
+    sender: "staff",
     body: text,
     status: result.status,
   });

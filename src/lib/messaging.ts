@@ -2,14 +2,15 @@ import { db } from "./db";
 import { customerSegment } from "./promo";
 import { generateReply, type ChatTurn } from "./ai";
 import { assertCoins, spendCoins, COIN_COSTS } from "./coins";
-import { sendTemplateVia } from "./channel";
 import { insideServiceWindow } from "./whatsapp";
 import { emitWebhook } from "./webhook";
-import { addSystemNote, deliver } from "./outbound";
+import { addSystemNote, deliver, deliverTemplate } from "./outbound";
 import { omsOnFirstResponse, omsOnFollowUp, omsOnHandover, omsOnInbound } from "./oms/lead";
 import type { AttributionInput } from "./oms/lead-store";
 import { getOmsCatalog } from "./oms/catalog";
 import { omsConfigured } from "./oms/client";
+import { detectOrderRequest, isOrderLookup, OPEN_ORDER_STATUSES, orderRequestReply } from "./oms/customer-intents";
+import { orderLookupContext } from "./oms/messages";
 import {
   buildOrderContext,
   createAutoOrder,
@@ -124,6 +125,28 @@ export async function aiRespond(conversationId: number): Promise<string> {
     }
   }
 
+  // Cancel / address change on an open order is not in the CS-AI contract:
+  // hand it to staff instead of letting the AI promise anything.
+  const request = lastIn ? detectOrderRequest(lastIn.text) : null;
+  if (request) {
+    const open = await db.omsOrder.findFirst({
+      where: { conversationId, status: { in: OPEN_ORDER_STATUSES } },
+      orderBy: { createdAt: "desc" },
+    });
+    if (open) {
+      const label = request === "cancel" ? "pembatalan" : "perubahan alamat";
+      await db.conversation.update({ where: { id: conversationId }, data: { mode: "eskalasi", modeChangedAt: new Date() } });
+      await addSystemNote(
+        conversationId,
+        `Pelanggan meminta ${label} pesanan ${open.nomor} (status ${open.status}). Proses di OMS lalu kabari pelanggan.`,
+      );
+      await omsOnHandover(conversationId, `Pelanggan meminta ${label} pesanan ${open.nomor}`);
+      await deliver(conversationId, orderRequestReply(request, open.nomor), "ai");
+      await emitWebhook("conversation.escalated", { conversation_id: conversationId, keyword: request });
+      return "escalated";
+    }
+  }
+
   try {
     await assertCoins(COIN_COSTS.aiReply);
     const turns = await history(conversationId);
@@ -164,9 +187,16 @@ export async function aiRespond(conversationId: number): Promise<string> {
       }
     }
 
+    // "cek pesanan saya": answer from this conversation's orders only.
+    let lookupContext = "";
+    if (!orderContext && lastIn && isOrderLookup(lastIn.text)) {
+      const orders = await db.omsOrder.findMany({ where: { conversationId }, orderBy: { createdAt: "desc" }, take: 3 });
+      if (orders.length) lookupContext = orderLookupContext(orders);
+    }
+
     const reply = await generateReply(agent.id, turns, undefined, segment, {
-      extraContext: orderContext || undefined,
-      skipShipping: Boolean(orderContext),
+      extraContext: orderContext || lookupContext || undefined,
+      skipShipping: Boolean(orderContext || lookupContext),
     });
     await spendCoins(COIN_COSTS.aiReply, `Balasan AI (${agent.name})`);
     const sent = await deliver(conversationId, reply, "ai");
@@ -219,22 +249,7 @@ export async function sendStaffMessage(conversationId: number, text: string) {
 }
 
 export async function sendTemplateMessage(conversationId: number, templateId: number) {
-  const conv = await db.conversation.findUniqueOrThrow({ where: { id: conversationId }, include: { customer: true, device: true } });
-  const tpl = await db.messageTemplate.findUniqueOrThrow({ where: { id: templateId } });
-  const text = `[Template: ${tpl.name}] ${tpl.body}`;
-  const result = await sendTemplateVia(conv.device, conv.customer.phone, tpl);
-  const message = await db.message.create({
-    data: { conversationId, direction: "out", sender: "staff", text, status: result.status, externalId: result.externalId },
-  });
-  await db.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: new Date() } });
-  await emitWebhook("message.sent", {
-    conversation_id: conversationId,
-    message_id: message.id,
-    sender: "staff",
-    body: text,
-    status: result.status,
-  });
-  await omsOnFirstResponse(conversationId);
+  const result = await deliverTemplate(conversationId, templateId);
   if (result.status === "failed") throw new Error(result.error ?? "Template gagal terkirim.");
 }
 

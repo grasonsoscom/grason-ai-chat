@@ -8,6 +8,10 @@ import { friendlyOmsError } from "./errors";
 import { ensureLeadId } from "./lead-store";
 import { orderFollowupText, orderSummaryText } from "./messages";
 import { enqueueOmsJob } from "./queue";
+import { rtsRiskReasons } from "./rts-risk";
+
+/** Delay between "dikirim" and the COD cash reminder (about H-1 before arrival). */
+export const COD_REMINDER_DELAY_MS = 48 * 3600_000;
 import type { Checkout, EventStatusOrder, Order, OrderBaru, Pengiriman, Verifikasi } from "./types";
 
 export function orderRowData(order: Order, checkoutId: number, conversationId: number) {
@@ -174,6 +178,25 @@ export async function autoVerifyCheckout(checkoutId: number) {
       })
     : null;
   if (!agent) return { verified: 0, skipped: row.orders.length };
+
+  // Risky orders (incomplete address, earlier RTS, large COD) go to staff.
+  const payload = JSON.parse(row.payload) as OrderBaru;
+  const previousRts = await db.omsOrder.count({
+    where: { conversationId: row.conversationId, status: "rts", checkoutId: { not: row.id } },
+  });
+  const totalCod = row.orders.reduce((sum, o) => sum + (o.metodeBayar === "cod" ? o.nilaiCod : 0), 0);
+  const reasons = rtsRiskReasons({ alamat: payload.alamat, totalCod, previousRts });
+  if (reasons.length) {
+    await db.conversation.update({
+      where: { id: row.conversationId },
+      data: { mode: "eskalasi", modeChangedAt: new Date() },
+    });
+    await addSystemNote(
+      row.conversationId,
+      `Order ${row.orders.map((o) => o.nomor).join(", ")} tidak diverifikasi otomatis: ${reasons.join("; ")}. Mohon konfirmasi manual ke pelanggan lalu klik Verifikasi.`,
+    );
+    return { verified: 0, skipped: row.orders.length };
+  }
 
   let verified = 0;
   let skipped = 0;
@@ -363,8 +386,18 @@ export async function applyStatusEvent(
     }.`,
   );
 
-  const text = orderFollowupText(event);
+  const text = orderFollowupText(event, row);
   if (text) await deliverAutomated(row.conversationId, text);
+
+  // COD still on the way two days after shipping: remind the buyer to prepare
+  // the cash (the job re-checks the status before sending).
+  if (statusChanged && event.data.status === "dikirim" && row.metodeBayar === "cod") {
+    await enqueueOmsJob(
+      "cod_reminder",
+      { orderId: row.id },
+      { dedupeKey: `cod-reminder:${row.id}`, delayMs: COD_REMINDER_DELAY_MS },
+    );
+  }
 
   if (needsStaff(event)) {
     const conv = await db.conversation.findUnique({

@@ -3,7 +3,7 @@ import type { EventStatusOrder, StatusOrder } from "@/lib/oms/types";
 
 // In-memory stand-in for the two tables applyStatusEvent touches. updateMany
 // implements the compare-and-set filter the real code relies on.
-type Row = { id: number; nomor: string; conversationId: number; status: string; pengirimanJson: string | null; lastEventAt: Date | null };
+type Row = { id: number; nomor: string; conversationId: number; status: string; pengirimanJson: string | null; lastEventAt: Date | null; metodeBayar?: string; nilaiCod?: number };
 const rows = new Map<number, Row>();
 
 function matches(row: Row, where: Record<string, unknown>) {
@@ -48,7 +48,8 @@ vi.mock("@/lib/outbound", () => ({
     return { status: "sent" };
   },
 }));
-vi.mock("@/lib/oms/queue", () => ({ enqueueOmsJob: vi.fn(async () => ({})) }));
+const enqueueOmsJob = vi.fn(async (..._args: unknown[]) => ({}));
+vi.mock("@/lib/oms/queue", () => ({ enqueueOmsJob }));
 vi.mock("@/lib/oms/client", () => ({}));
 
 const { applyStatusEvent, isStatusRegression } = await import("@/lib/oms/orders");
@@ -67,6 +68,7 @@ beforeEach(() => {
   rows.set(1, { id: 1, nomor: "GRS-1", conversationId: 7, status: "terverifikasi", pengirimanJson: null, lastEventAt: null });
   notes.length = 0;
   sent.length = 0;
+  enqueueOmsJob.mockClear();
 });
 
 describe("isStatusRegression", () => {
@@ -121,6 +123,16 @@ describe("applyStatusEvent", () => {
     expect(result).toMatchObject({ notified: true });
     expect(sent[0]).toContain("belum berhasil mengantar");
     expect(notes.some((n) => n.includes("dieskalasi"))).toBe(true);
+  });
+
+  it("schedules one COD reminder when a COD order ships", async () => {
+    Object.assign(rows.get(1)!, { metodeBayar: "cod", nilaiCod: 155_400 });
+    await applyStatusEvent(1, event("dikirim", "2026-10-31T01:00:00Z", { resi: "JT1" }));
+    await applyStatusEvent(1, event("dikirim", "2026-10-31T02:00:00Z", { resi: "JT1" }));
+    const reminders = enqueueOmsJob.mock.calls.filter((c) => c[0] === "cod_reminder");
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0][2]).toMatchObject({ dedupeKey: "cod-reminder:1", delayMs: 48 * 3600_000 });
+    expect(sent[0]).toMatch(/siapkan uang Rp\s?155\.400/);
   });
 
   it("does not message the customer when nothing changed", async () => {

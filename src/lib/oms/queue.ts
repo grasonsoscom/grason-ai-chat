@@ -3,7 +3,7 @@
 import { Prisma } from "@prisma/client";
 import { db } from "../db";
 
-export type OmsJobKind = "create_lead" | "patch_lead" | "create_order" | "verify_order";
+export type OmsJobKind = "create_lead" | "patch_lead" | "create_order" | "verify_order" | "cod_reminder";
 
 export type EnqueueOptions = {
   /** Unique key makes duplicate enqueues a no-op (e.g. one lead per conversation). */

@@ -52,7 +52,7 @@ const server = createServer(async (req, res) => {
       items: [{ sku: "BSR-01", qty: 1 }],
       nama: full ? "Budi" : "",
       no_wa: "",
-      alamat: full ? "Jl. Melati No. 2" : "",
+      alamat: full ? "Jl. Melati No. 2 RT 03 RW 05" : "",
       kelurahan: full ? "Sukajadi" : "",
       kecamatan: full ? "Sukajadi" : "",
       kota: full ? "Bandung" : "",
