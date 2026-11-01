@@ -40,12 +40,17 @@ async function alertDevice() {
  * Sends one alert to every admin number. The same `key` is sent at most once
  * per `throttleMs` so a burst of failures becomes one message. Never throws.
  */
-export async function alertAdmin(key: string, text: string, throttleMs = DEFAULT_THROTTLE_MS) {
+export async function alertAdmin(
+  key: string,
+  text: string,
+  throttleMs = DEFAULT_THROTTLE_MS,
+  title = "⚠️ GrasOn AI Chat",
+) {
   const to = alertRecipients();
   if (!to.length || !shouldAlert(key, throttleMs)) return;
   try {
     const device = await alertDevice();
-    const body = `⚠️ GrasOn AI Chat\n${text}`;
+    const body = `${title}\n${text}`;
     for (const phone of to) {
       const result = await sendTextVia(device, phone, body);
       if (result.status === "failed") console.error(`[alert] to admin failed: ${result.error ?? "unknown"}`);

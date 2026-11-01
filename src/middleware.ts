@@ -8,6 +8,8 @@ const PUBLIC = [
   "/api/webhooks/incoming",
   "/api/webhooks/whatsapp",
   "/api/webhooks/oms",
+  // OMS admin alerts, signed like the OMS webhooks.
+  "/api/webhooks/oms-alert",
   "/api/cron",
   // Token-authenticated REST API; each route calls authenticateApiToken().
   "/api/v1",
