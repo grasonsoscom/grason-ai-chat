@@ -10,7 +10,7 @@ import { DisconnectReason, jidDecode, type proto } from "baileys";
 import QRCode from "qrcode";
 import { db } from "@/lib/db";
 import { disconnectCode, openSocket, type WASocket } from "@/lib/baileys";
-import { HUB_API_TYPE, type SendResult } from "@/lib/whatsapp";
+import { HUB_API_TYPE, type OutgoingMedia, type SendResult } from "@/lib/whatsapp";
 
 const HUB_DIR = path.resolve(process.env.WA_HUB_DIR || ".wa-hub");
 const PAIRING_TTL_MS = 3 * 60 * 1000;
@@ -241,6 +241,23 @@ export async function sendHubText(deviceId: number, to: string, text: string): P
     return { status: "sent" };
   } catch {
     return { status: "failed", error: "Pesan gagal dikirim lewat WhatsApp Hub." };
+  }
+}
+
+export async function sendHubMedia(deviceId: number, to: string, media: OutgoingMedia): Promise<SendResult> {
+  const s = findByDevice(deviceId);
+  if (!s?.sock || s.state !== "open") return { status: "failed", error: "Perangkat WhatsApp Hub tidak terhubung. Scan ulang di menu WhatsApp Hub." };
+  const caption = media.caption?.trim() || undefined;
+  try {
+    await s.sock.sendMessage(
+      `${to.replace(/\D/g, "")}@s.whatsapp.net`,
+      media.kind === "image"
+        ? { image: media.data, mimetype: media.mimeType, caption }
+        : { video: media.data, mimetype: media.mimeType, caption },
+    );
+    return { status: "sent" };
+  } catch {
+    return { status: "failed", error: "Media gagal dikirim lewat WhatsApp Hub." };
   }
 }
 

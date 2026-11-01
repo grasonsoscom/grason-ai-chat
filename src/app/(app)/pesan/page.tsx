@@ -9,7 +9,8 @@ import { getRajaOngkirStatus } from "@/lib/rajaongkir";
 import { customerSegment } from "@/lib/promo";
 import { formatTime, timeAgo } from "@/lib/format";
 import { HUB_API_TYPE, insideServiceWindow, isConfigured } from "@/lib/whatsapp";
-import { requestAiReply, sendMessage, simulateInbound, updateConversation } from "./actions";
+import { mediaUrl } from "@/lib/media";
+import { requestAiReply, sendMediaMessage, sendMessage, simulateInbound, updateConversation } from "./actions";
 import { AiToggle } from "./ai-toggle";
 import { requirePageAccess } from "@/lib/auth";
 import { isAdminRole } from "@/lib/permissions";
@@ -166,10 +167,14 @@ async function Kanban({ convs, link }: { convs: ConvRow[]; link: (p: Record<stri
 async function ConversationPanel({ id, isAdmin }: { id: number; isAdmin: boolean }) {
   const conv = await db.conversation.findUnique({
     where: { id },
-    include: { customer: true, device: { include: { templates: true } }, messages: { orderBy: { createdAt: "asc" } } },
+    include: {
+      customer: true,
+      device: { include: { templates: true } },
+      messages: { orderBy: { createdAt: "asc" }, include: { mediaAsset: { select: { id: true, kind: true } } } },
+    },
   });
   if (!conv) return <div className="p-6 text-sm text-slate-500">Percakapan tidak ditemukan.</div>;
-  const [staff, stages, omsOrders, failedCheckouts] = await Promise.all([
+  const [staff, stages, omsOrders, failedCheckouts, mediaList] = await Promise.all([
     db.user.findMany({ where: { status: "active" }, select: { id: true, name: true } }),
     db.funnelStage.findMany({ orderBy: { number: "asc" } }),
     db.omsOrder.findMany({ where: { conversationId: id }, orderBy: { createdAt: "desc" }, take: 20 }),
@@ -179,6 +184,7 @@ async function ConversationPanel({ id, isAdmin }: { id: number; isAdmin: boolean
       take: 5,
       select: { id: true, createdAt: true, lastError: true, createdByAi: true },
     }),
+    db.mediaAsset.findMany({ where: { active: true }, select: { id: true, title: true, kind: true }, orderBy: { title: "asc" } }),
   ]);
   const inWindow = insideServiceWindow(conv.lastInboundAt);
   const defaultSegment = await customerSegment(conv.customerId);
@@ -263,6 +269,13 @@ async function ConversationPanel({ id, isAdmin }: { id: number; isAdmin: boolean
             ) : (
               <div key={m.id} className={`flex ${m.direction === "out" ? "justify-end" : ""}`}>
                 <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${m.direction === "out" ? "bg-green-600 text-white" : "bg-white shadow-sm"}`}>
+                  {m.mediaAsset &&
+                    (m.mediaAsset.kind === "video" ? (
+                      <video src={mediaUrl(m.mediaAsset.id)} controls preload="metadata" className="mb-1 max-h-64 rounded-lg bg-black" />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={mediaUrl(m.mediaAsset.id)} alt="" className="mb-1 max-h-64 rounded-lg" />
+                    ))}
                   <p className="whitespace-pre-wrap">{m.text}</p>
                   <p className={`mt-1 text-right text-[10px] ${m.direction === "out" ? "text-green-100" : "text-slate-400"}`}>
                     {m.sender === "ai" && "AI · "}{formatTime(m.createdAt)}
@@ -280,11 +293,25 @@ async function ConversationPanel({ id, isAdmin }: { id: number; isAdmin: boolean
         {conv.mode === "ai" ? (
           <p className="rounded-lg bg-green-50 px-3 py-2 text-center text-xs text-green-800">Agen AI sedang membalas percakapan ini. Matikan <span className="font-semibold">Agen AI</span> di atas untuk membalas manual.</p>
         ) : inWindow ? (
-          <ActionForm action={sendMessage} resetOnSuccess showOk={false} className="flex gap-2">
-            <input type="hidden" name="conversationId" value={id} />
-            <input name="text" required placeholder="Tulis pesan..." className="input" autoComplete="off" />
-            <SubmitButton>Kirim</SubmitButton>
-          </ActionForm>
+          <div className="space-y-2">
+            <ActionForm action={sendMessage} resetOnSuccess showOk={false} className="flex gap-2">
+              <input type="hidden" name="conversationId" value={id} />
+              <input name="text" required placeholder="Tulis pesan..." className="input" autoComplete="off" />
+              <SubmitButton>Kirim</SubmitButton>
+            </ActionForm>
+            {mediaList.length > 0 && (
+              <ActionForm action={sendMediaMessage} showOk={false} className="flex flex-wrap items-center gap-2">
+                <input type="hidden" name="conversationId" value={id} />
+                <select name="mediaId" required defaultValue="" className="input w-auto max-w-full text-xs" aria-label="Media testimoni">
+                  <option value="" disabled>Pilih media testimoni…</option>
+                  {mediaList.map((m) => (
+                    <option key={m.id} value={m.id}>{m.kind === "video" ? "🎬" : "🖼️"} {m.title}</option>
+                  ))}
+                </select>
+                <SubmitButton variant="secondary">Kirim media</SubmitButton>
+              </ActionForm>
+            )}
+          </div>
         ) : (
           <ActionForm action={sendMessage} showOk={false} className="flex flex-wrap items-center gap-2">
             <input type="hidden" name="conversationId" value={id} />

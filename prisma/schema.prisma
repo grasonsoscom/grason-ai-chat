@@ -196,7 +196,30 @@ model Message {
   status         String       @default("sent") // sent | delivered | read | failed | simulated
   // WhatsApp message id (wamid). Matches delivery receipts and dedupes webhook retries.
   externalId     String?      @unique
+  // Photo/video sent from the media library (testimonials).
+  mediaAssetId   Int?
+  mediaAsset     MediaAsset?  @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
   createdAt      DateTime     @default(now())
+}
+
+// Testimonial photos/videos the AI agent (or staff) can send in chat.
+model MediaAsset {
+  id        Int       @id @default(autoincrement())
+  title     String
+  kind      String    // "image" | "video"
+  fileName  String    // local file name under uploads/media, or a Blob URL
+  mimeType  String
+  size      Int
+  // When the AI may send it; shown to the AI in the system prompt.
+  usage     String    @default("")
+  // Sent with the photo/video in WhatsApp.
+  caption   String    @default("")
+  productId Int?
+  product   Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  active    Boolean   @default(true)
+  messages  Message[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 }
 
 model Product {
@@ -206,6 +229,7 @@ model Product {
   aiPrompt    String           @default("")
   variants    ProductVariant[]
   images      ProductImage[]
+  media       MediaAsset[]
   agents      AiAgent[]
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt

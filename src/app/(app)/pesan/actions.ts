@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { optId, required, run, str, type ActionState } from "@/lib/action";
-import { aiRespond, recordInbound, sendStaffMessage, sendTemplateMessage } from "@/lib/messaging";
+import { aiRespond, recordInbound, sendStaffMedia, sendStaffMessage, sendTemplateMessage } from "@/lib/messaging";
 import { addSystemNote } from "@/lib/outbound";
 import { formatIDR } from "@/lib/format";
 import { quoteOngkir } from "@/lib/ongkir-quote";
@@ -35,6 +35,21 @@ export async function sendMessage(_: ActionState, fd: FormData) {
     else await sendStaffMessage(id, required(fd, "text", "Pesan"));
     revalidatePath("/pesan");
     return "Pesan terkirim.";
+  });
+}
+
+/** Sends a testimonial photo/video from the media library. */
+export async function sendMediaMessage(_: ActionState, fd: FormData) {
+  return run(async () => {
+    await requirePermission("pesan");
+    const id = Number(fd.get("conversationId"));
+    const mediaId = optId(fd, "mediaId");
+    if (!mediaId) throw new Error("Pilih media yang akan dikirim.");
+    const conv = await db.conversation.findUniqueOrThrow({ where: { id } });
+    if (conv.mode === "ai") throw new Error("Agen AI sedang aktif. Matikan Agen AI untuk membalas manual.");
+    await sendStaffMedia(id, mediaId);
+    revalidatePath("/pesan");
+    return "Media terkirim.";
   });
 }
 

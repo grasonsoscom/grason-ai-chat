@@ -5,6 +5,7 @@ import type { Segment } from "./promo";
 import { shippingContext } from "./shipping";
 import { catalogPrompt, catalogUnavailablePrompt, getOmsCatalog } from "./oms/catalog";
 import { omsConfigured } from "./oms/client";
+import { mediaPrompt, type MediaForPrompt } from "./media";
 
 export class AiNotConfiguredError extends Error {
   constructor() {
@@ -27,6 +28,27 @@ export function loadAgent(agentId: number) {
       funnel: { include: { levels: { include: { stages: true }, orderBy: { order: "asc" } } } },
     },
   });
+}
+
+/**
+ * Active testimonial media the agent may send: general ones and those of its
+ * products, minus `exclude` (already sent in the conversation).
+ */
+export async function mediaForAgent(
+  agent: { products: { id: number }[] },
+  exclude: number[] = [],
+): Promise<MediaForPrompt[]> {
+  const rows = await db.mediaAsset.findMany({
+    where: {
+      active: true,
+      id: { notIn: exclude },
+      OR: [{ productId: null }, { productId: { in: agent.products.map((p) => p.id) } }],
+    },
+    include: { product: { select: { name: true } } },
+    orderBy: { id: "asc" },
+    take: 40,
+  });
+  return rows.map((m) => ({ id: m.id, title: m.title, kind: m.kind, usage: m.usage, product: m.product?.name }));
 }
 
 const rp = (n: number) => `Rp${n.toLocaleString("id-ID")}`;
@@ -127,7 +149,7 @@ export async function generateReply(
   turns: ChatTurn[],
   overrides?: { description?: string; personality?: string },
   segment?: Segment,
-  options?: { extraContext?: string; skipShipping?: boolean },
+  options?: { extraContext?: string; skipShipping?: boolean; media?: MediaForPrompt[] },
 ) {
   const config = await getAiConfig();
   if (!config) throw new AiNotConfiguredError();
@@ -141,11 +163,12 @@ export async function generateReply(
     p.variants.map((v) => ({ name: agent.products.length > 1 ? `${p.name} ${v.name}` : v.name, price: v.salePrice ?? v.price })));
 
   const omsEnabled = omsConfigured();
-  const [shipping, catalog] = await Promise.all([
+  const [shipping, catalog, media] = await Promise.all([
     options?.skipShipping
       ? Promise.resolve(null)
       : shippingContext(turns, { items, segment }),
     omsEnabled ? getOmsCatalog() : Promise.resolve(null),
+    options?.media ? Promise.resolve(options.media) : mediaForAgent(agent),
   ]);
   const system = [
     buildSystemPrompt(
@@ -154,6 +177,7 @@ export async function generateReply(
       omsEnabled ? (catalog ? catalogPrompt(catalog) : catalogUnavailablePrompt()) : null,
       omsEnabled,
     ),
+    mediaPrompt(media),
     options?.extraContext?.trim(),
   ].filter(Boolean).join("\n\n");
   return config.provider === "openai"

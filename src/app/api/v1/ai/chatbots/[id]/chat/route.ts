@@ -31,7 +31,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     try {
       await assertCoins(COIN_COSTS.aiReply);
-      const reply = await generateReply(agent.id, [...history, { role: "user", text: message }]);
+      // The API returns text only, so the AI is not offered testimonial media here.
+      const reply = await generateReply(agent.id, [...history, { role: "user", text: message }], undefined, undefined, {
+        media: [],
+      });
       await spendCoins(COIN_COSTS.aiReply, `API chatbot (${agent.name})`);
       return ok({ reply });
     } catch (e) {

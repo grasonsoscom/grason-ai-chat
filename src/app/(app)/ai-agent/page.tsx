@@ -9,9 +9,15 @@ export default async function AiAgentListPage() {
   await requirePageAccess("ai-agent");
   const agents = await db.aiAgent.findMany({ include: { devices: true, _count: { select: { products: true } } }, orderBy: { id: "asc" } });
   const addBtn = <form action={createAgent}><button className="btn btn-primary">+ Buat AI Agent</button></form>;
+  const actions = (
+    <div className="flex gap-2">
+      <Link href="/ai-agent/media" className="btn btn-secondary">🎞️ Media Testimoni</Link>
+      {addBtn}
+    </div>
+  );
   return (
     <div>
-      <PageHeader title="AI Agent" subtitle="Agen AI sebagai penjawab pertama sebelum eskalasi ke staf" actions={addBtn} />
+      <PageHeader title="AI Agent" subtitle="Agen AI sebagai penjawab pertama sebelum eskalasi ke staf" actions={actions} />
       {agents.length === 0 ? <EmptyState title="Belum ada AI Agent" action={addBtn} /> : (
         <div className="grid gap-4 md:grid-cols-2">
           {agents.map((a) => (

@@ -50,6 +50,49 @@ export function sendText(to: string, text: string, phoneNumberId?: string | null
   return post({ to: to.replace(/\D/g, ""), type: "text", text: { body: text } }, phoneNumberId);
 }
 
+export type OutgoingMedia = {
+  kind: "image" | "video";
+  data: Buffer;
+  mimeType: string;
+  fileName: string;
+  caption?: string;
+};
+
+/**
+ * Sends a photo/video: uploads the file to Meta first (no public URL needed),
+ * then sends it by media id.
+ */
+export async function sendMedia(to: string, media: OutgoingMedia, phoneNumberId?: string | null): Promise<SendResult> {
+  const id = resolvePhoneNumberId(phoneNumberId);
+  if (!process.env.WHATSAPP_TOKEN || !id) return { status: "simulated" };
+  let mediaId: string | undefined;
+  try {
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("type", media.mimeType);
+    form.append("file", new Blob([new Uint8Array(media.data)], { type: media.mimeType }), media.fileName);
+    const res = await fetch(`${GRAPH_URL}/${encodeURIComponent(id)}/media`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+      body: form,
+      signal: AbortSignal.timeout(60000),
+    });
+    const json = (await res.json().catch(() => ({}))) as { id?: string; error?: { message?: string; code?: number } };
+    if (!res.ok || !json.id) {
+      const detail = json.error?.message ? `: ${json.error.message}` : "";
+      return { status: "failed", error: `Unggah media ke WhatsApp gagal (${res.status})${detail}` };
+    }
+    mediaId = json.id;
+  } catch {
+    return { status: "failed", error: "Tidak dapat mengunggah media ke WhatsApp API" };
+  }
+  const caption = media.caption?.trim();
+  return post(
+    { to: to.replace(/\D/g, ""), type: media.kind, [media.kind]: { id: mediaId, ...(caption ? { caption } : {}) } },
+    phoneNumberId,
+  );
+}
+
 export function sendTemplate(to: string, templateName: string, opts: { languageCode?: string; phoneNumberId?: string | null } = {}) {
   return post(
     {

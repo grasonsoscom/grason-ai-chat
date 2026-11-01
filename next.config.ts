@@ -5,8 +5,8 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["baileys", "exceljs"],
   experimental: {
     serverActions: {
-      // Product images are capped at 2 MB each; allow a few per request.
-      bodySizeLimit: "12mb",
+      // Product images are capped at 2 MB each; testimonial videos at 16 MB (one per upload).
+      bodySizeLimit: "20mb",
     },
   },
 };

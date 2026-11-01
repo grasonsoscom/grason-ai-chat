@@ -3,11 +3,12 @@ import { alertAdmin } from "./alerts";
 import { cancelAiReply, randomDelaySec, scheduleAiReply } from "./ai-delay";
 import { sendTypingVia } from "./channel";
 import { customerSegment } from "./promo";
-import { generateReply, type ChatTurn } from "./ai";
+import { generateReply, loadAgent, mediaForAgent, type ChatTurn } from "./ai";
 import { assertCoins, spendCoins, COIN_COSTS } from "./coins";
+import { splitMediaTags } from "./media";
 import { insideServiceWindow } from "./whatsapp";
 import { emitWebhook } from "./webhook";
-import { addSystemNote, deliver, deliverTemplate } from "./outbound";
+import { addSystemNote, deliver, deliverMedia, deliverTemplate, type OutboundResult } from "./outbound";
 import { omsOnFirstResponse, omsOnFollowUp, omsOnHandover, omsOnInbound } from "./oms/lead";
 import type { AttributionInput } from "./oms/lead-store";
 import { getOmsCatalog } from "./oms/catalog";
@@ -26,6 +27,17 @@ import {
   type AiOrderDraft,
   type AutoOrderPlan,
 } from "./ai-order";
+
+/** Media the agent may still send in this conversation (not sent there before). */
+async function availableMedia(agentId: number, conversationId: number) {
+  const agent = await loadAgent(agentId);
+  if (!agent) return [];
+  const sent = await db.message.findMany({
+    where: { conversationId, mediaAssetId: { not: null } },
+    select: { mediaAssetId: true },
+  });
+  return mediaForAgent(agent, sent.map((m) => m.mediaAssetId!));
+}
 
 async function findAgentForDevice(deviceId: number | null) {
   if (deviceId) {
@@ -203,14 +215,32 @@ export async function aiRespond(conversationId: number): Promise<string> {
       if (orders.length) lookupContext = orderLookupContext(orders);
     }
 
-    const reply = await generateReply(agent.id, turns, undefined, segment, {
+    // Testimonial media the AI may attach; none while an order is being taken,
+    // and never one already sent in this conversation.
+    const media = orderContext ? [] : await availableMedia(agent.id, conversationId);
+    const raw = await generateReply(agent.id, turns, undefined, segment, {
       extraContext: orderContext || lookupContext || undefined,
       skipShipping: Boolean(orderContext || lookupContext),
+      media,
     });
+    const { text: reply, ids: mediaIds } = splitMediaTags(raw, media.map((m) => m.id));
     await spendCoins(COIN_COSTS.aiReply, `Balasan AI (${agent.name})`);
-    const sent = await deliver(conversationId, reply, "ai");
+    const sent: OutboundResult = reply
+      ? await deliver(conversationId, reply, "ai")
+      : { status: "sent" };
+    for (const id of mediaIds) {
+      const r = await deliverMedia(conversationId, id, "ai");
+      if (r.status === "failed") {
+        await addSystemNote(conversationId, `Media testimoni gagal dikirim: ${r.error ?? "kesalahan tidak diketahui"}`);
+      }
+    }
     if (agent.webhookOnReply) {
-      await emitWebhook("ai.replied", { conversation_id: conversationId, agent_id: agent.id, body: reply });
+      await emitWebhook("ai.replied", {
+        conversation_id: conversationId,
+        agent_id: agent.id,
+        body: reply,
+        ...(mediaIds.length ? { media_ids: mediaIds } : {}),
+      });
     }
 
     if (orderPlan?.ready && orderDraft.confirmed) {
@@ -259,6 +289,19 @@ export async function sendStaffMessage(conversationId: number, text: string) {
   await cancelAiReply(conversationId);
   const result = await deliver(conversationId, text, "staff");
   if (result.status === "failed") throw new Error(result.error ?? "Pesan gagal terkirim.");
+}
+
+/** Staff sends a photo/video from the media library; same 24h rule as text. */
+export async function sendStaffMedia(conversationId: number, mediaAssetId: number) {
+  const conv = await db.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+  if (!insideServiceWindow(conv.lastInboundAt)) {
+    throw new Error("Di luar jendela 24 jam. Kirim pesan template untuk memulai ulang percakapan.");
+  }
+  const asset = await db.mediaAsset.findUnique({ where: { id: mediaAssetId } });
+  if (!asset?.active) throw new Error("Media tidak ditemukan atau nonaktif.");
+  await cancelAiReply(conversationId);
+  const result = await deliverMedia(conversationId, mediaAssetId, "staff");
+  if (result.status === "failed") throw new Error(result.error ?? "Media gagal terkirim.");
 }
 
 export async function sendTemplateMessage(conversationId: number, templateId: number) {

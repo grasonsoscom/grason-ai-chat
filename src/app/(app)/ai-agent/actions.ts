@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { MAX_REPLY_DELAY_SEC } from "@/lib/ai-delay";
 import { generateReply, type ChatTurn } from "@/lib/ai";
 import { assertCoins, COIN_COSTS, spendCoins } from "@/lib/coins";
+import { KIND_LABEL, splitMediaTags, type MediaKind } from "@/lib/media";
 import { runFollowups } from "@/lib/messaging";
 import { num, optId, required, run, str, type ActionState } from "@/lib/action";
 import type { Prisma } from "@prisma/client";
@@ -96,9 +97,16 @@ export async function testAgentReply(agentId: number, turns: ChatTurn[], overrid
   await requirePermission("ai-agent");
   try {
     await assertCoins(COIN_COSTS.aiReply);
-    const reply = await generateReply(agentId, turns, overrides);
+    const raw = await generateReply(agentId, turns, overrides);
     await spendCoins(COIN_COSTS.aiReply, "AI Response Test");
-    return { reply };
+    // Show which testimonial media the AI would send instead of the raw tags.
+    const { text, ids } = splitMediaTags(raw, (await db.mediaAsset.findMany({ select: { id: true } })).map((m) => m.id));
+    const media = await db.mediaAsset.findMany({ where: { id: { in: ids } }, select: { id: true, kind: true, title: true } });
+    const lampiran = ids
+      .map((id) => media.find((m) => m.id === id))
+      .filter((m) => m !== undefined)
+      .map((m) => `📎 ${KIND_LABEL[m.kind as MediaKind] ?? "Media"} terkirim: ${m.title}`);
+    return { reply: [text, ...lampiran].filter(Boolean).join("\n") };
   } catch (e) {
     return { error: (e as Error).message };
   }

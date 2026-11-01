@@ -2,7 +2,8 @@
 // Kept separate from messaging.ts so OMS modules can send messages without
 // creating an import cycle.
 import { db } from "./db";
-import { sendTemplateVia, sendTextVia } from "./channel";
+import { sendMediaVia, sendTemplateVia, sendTextVia } from "./channel";
+import { KIND_LABEL, readMedia, type MediaKind } from "./media";
 import { emitWebhook } from "./webhook";
 import { insideServiceWindow } from "./whatsapp";
 import { omsOnFirstResponse } from "./oms/lead";
@@ -39,6 +40,58 @@ export async function deliver(
     message_id: message.id,
     sender,
     body: text,
+    status: result.status,
+  });
+  await omsOnFirstResponse(conversationId);
+  return { ...result, messageId: message.id };
+}
+
+/**
+ * Sends a photo/video from the media library and logs it. The message text is a
+ * short label ("[Foto: …]") so history, search, and the AI see what was sent.
+ */
+export async function deliverMedia(
+  conversationId: number,
+  mediaAssetId: number,
+  sender: "ai" | "staff",
+): Promise<OutboundResult> {
+  const conv = await db.conversation.findUniqueOrThrow({
+    where: { id: conversationId },
+    include: { customer: true, device: true },
+  });
+  const asset = await db.mediaAsset.findUniqueOrThrow({ where: { id: mediaAssetId } });
+  const label = `[${KIND_LABEL[asset.kind as MediaKind] ?? "Media"}: ${asset.title}]${asset.caption.trim() ? ` ${asset.caption.trim()}` : ""}`;
+  let result: Awaited<ReturnType<typeof sendMediaVia>>;
+  try {
+    const data = await readMedia(asset.fileName);
+    result = await sendMediaVia(conv.device, conv.customer.phone, {
+      kind: asset.kind as MediaKind,
+      data,
+      mimeType: asset.mimeType,
+      fileName: `${asset.kind === "video" ? "video" : "foto"}${asset.mimeType === "video/mp4" ? ".mp4" : asset.mimeType === "image/png" ? ".png" : ".jpg"}`,
+      caption: asset.caption,
+    });
+  } catch {
+    result = { status: "failed", error: "File media tidak ditemukan di server." };
+  }
+  const message = await db.message.create({
+    data: {
+      conversationId,
+      direction: "out",
+      sender,
+      text: label,
+      status: result.status,
+      externalId: result.externalId,
+      mediaAssetId: asset.id,
+    },
+  });
+  await db.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: new Date() } });
+  await emitWebhook("message.sent", {
+    conversation_id: conversationId,
+    message_id: message.id,
+    sender,
+    body: label,
+    media: { id: asset.id, kind: asset.kind, title: asset.title },
     status: result.status,
   });
   await omsOnFirstResponse(conversationId);
