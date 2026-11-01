@@ -1,31 +1,99 @@
 @import "tailwindcss";
 
+/*
+ * GrasOn visual system: colours from jamu and the Indonesian kitchen instead of
+ * stock WhatsApp green. The green/slate scales are redefined here so every page
+ * that uses them picks up the palette.
+ *   Tinta  #1F2A44  text, sidebar          Pandan #1E7A5A  actions, staff replies
+ *   Kunyit #E0A21B  needs attention only   Daun muda #E4EFE8  AI replies
+ *   Kertas #F2F4F1  page background        Putih #FFFFFF  surfaces
+ */
+@theme {
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+
+  --color-green-50: #eef6f1;
+  --color-green-100: #e4efe8;
+  --color-green-200: #c6ddcf;
+  --color-green-300: #9cc4ae;
+  --color-green-400: #5fa184;
+  --color-green-500: #2f8a67;
+  --color-green-600: #1e7a5a;
+  --color-green-700: #17644a;
+  --color-green-800: #134f3b;
+  --color-green-900: #0f3f30;
+  --color-green-950: #08261d;
+
+  --color-slate-50: #f5f6f4;
+  --color-slate-100: #eceeea;
+  --color-slate-200: #dee2dc;
+  --color-slate-300: #c5cbc4;
+  --color-slate-400: #949c97;
+  --color-slate-500: #646d6a;
+  --color-slate-600: #4a5260;
+  --color-slate-700: #353e50;
+  --color-slate-800: #283247;
+  --color-slate-900: #1f2a44;
+  --color-slate-950: #141b2e;
+
+  --color-tinta: #1f2a44;
+  --color-tinta-soft: #2b3753;
+  --color-kunyit: #e0a21b;
+  --color-kunyit-soft: #fbf0d4;
+  --color-kunyit-ink: #6e4b00;
+  --color-kertas: #f2f4f1;
+}
+
 :root {
   color-scheme: light;
 }
 
 body {
-  background: #f8fafc;
-  color: #0f172a;
+  background: var(--color-kertas);
+  color: var(--color-tinta);
+  font-feature-settings: "tnum" 1;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-green-600);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60;
   }
   .btn-primary {
     @apply bg-green-600 text-white hover:bg-green-700;
   }
   .btn-secondary {
-    @apply border border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+    @apply border border-slate-300 bg-white text-slate-800 hover:border-slate-400 hover:bg-slate-50;
   }
   .btn-danger {
-    @apply bg-red-600 text-white hover:bg-red-700;
+    @apply bg-red-700 text-white hover:bg-red-800;
   }
   .btn-ghost {
-    @apply px-2 py-1 text-slate-600 hover:bg-slate-100;
+    @apply px-2 py-1 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900;
   }
   .input {
-    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100;
+    @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-green-600 focus:ring-2 focus:ring-green-100;
+  }
+
+  /*
+   * Kawung (batik) motif behind the chat thread: the one bold element. Four
+   * ellipses per tile, drawn at very low contrast so bubbles stay readable.
+   */
+  .latar-kawung {
+    background-color: #eef1ed;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cg fill='none' stroke='%231e7a5a' stroke-opacity='0.09' stroke-width='1.2'%3E%3Cellipse cx='28' cy='14' rx='7' ry='12'/%3E%3Cellipse cx='28' cy='42' rx='7' ry='12'/%3E%3Cellipse cx='14' cy='28' rx='12' ry='7'/%3E%3Cellipse cx='42' cy='28' rx='12' ry='7'/%3E%3Ccircle cx='28' cy='28' r='1.6' fill='%231e7a5a' fill-opacity='0.12' stroke='none'/%3E%3C/g%3E%3C/svg%3E");
+    background-size: 56px 56px;
   }
 }
