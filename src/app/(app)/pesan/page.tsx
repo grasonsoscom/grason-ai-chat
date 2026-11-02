@@ -12,6 +12,7 @@ import { HUB_API_TYPE, insideServiceWindow, isConfigured } from "@/lib/whatsapp"
 import { mediaUrl } from "@/lib/media";
 import { requestAiReply, sendMediaMessage, sendMessage, simulateInbound, updateConversation } from "./actions";
 import { AiToggle } from "./ai-toggle";
+import { KotakTulis, PesanLangsung } from "./langsung";
 import { requirePageAccess } from "@/lib/auth";
 import { isAdminRole } from "@/lib/permissions";
 
@@ -65,14 +66,15 @@ export default async function PesanPage({ searchParams }: { searchParams: SP }) 
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-[28px] font-bold leading-tight tracking-tight">Pesan</h1>
-          <p className="mt-0.5 text-sm text-slate-600">
+      <PesanLangsung c={sp.c} />
+      <div className={`mb-3 flex flex-wrap items-center justify-between gap-2 ${sp.c && view === "daftar" ? "hidden md:flex" : ""}`}>
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-xl font-bold tracking-tight">Pesan</h1>
+          <p className="text-sm text-slate-600">
             {countOf("eskalasi") > 0 ? (
-              <span className="font-semibold text-kunyit-ink">{countOf("eskalasi")} percakapan menunggu staf</span>
+              <span className="font-semibold text-kunyit-ink">{countOf("eskalasi")} menunggu staf</span>
             ) : (
-              "Tidak ada percakapan yang menunggu staf"
+              "Tidak ada yang menunggu staf"
             )}
           </p>
         </div>
@@ -96,7 +98,12 @@ export default async function PesanPage({ searchParams }: { searchParams: SP }) 
         </div>
       </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-3">
+      {view === "kanban" ? (
+        <Kanban convs={convs} link={link} />
+      ) : (
+        <div className="grid h-[calc(100dvh-12rem)] min-h-[520px] grid-cols-1 overflow-hidden rounded-lg border border-slate-200 bg-white md:grid-cols-[340px_1fr]">
+          <div className={`min-h-0 flex-col border-r border-slate-200 ${sp.c ? "hidden md:flex" : "flex"}`}>
+      <div className="space-y-2 border-b border-slate-200 p-3">
         <nav className="-mx-1 flex max-w-full gap-1 overflow-x-auto px-1 text-sm font-semibold" aria-label="Saring percakapan">
           {[["semua", "Semua", semuaPercakapan.length && tab === "semua" ? semuaPercakapan.length : undefined], ["staf", "Ditangani staf", countOf("staf")], ["eskalasi", "Eskalasi", countOf("eskalasi")]].map(([k, label, n]) => (
             <Link
@@ -112,19 +119,14 @@ export default async function PesanPage({ searchParams }: { searchParams: SP }) 
             </Link>
           ))}
         </nav>
-        <form action="/pesan" className="flex flex-1 justify-end gap-2" role="search">
+        <form action="/pesan" className="flex gap-2" role="search">
           <input type="hidden" name="view" value={view} />
           <input type="hidden" name="tab" value={tab} />
-          <input name="q" defaultValue={q} placeholder="Cari nama atau nomor" aria-label="Cari percakapan" className="input max-w-xs" />
-          <button className="btn btn-secondary">Cari</button>
+          <input name="q" defaultValue={q} placeholder="Cari nama atau nomor" aria-label="Cari percakapan" className="input py-1.5" />
+          <button className="btn btn-secondary py-1.5">Cari</button>
         </form>
       </div>
-
-      {view === "kanban" ? (
-        <Kanban convs={convs} link={link} />
-      ) : (
-        <div className="grid h-[calc(100vh-232px)] min-h-[520px] grid-cols-1 overflow-hidden rounded-lg border border-slate-200 bg-white md:grid-cols-[340px_1fr]">
-          <ul className="overflow-y-auto border-r border-slate-200" aria-label="Daftar percakapan">
+          <ul className="min-h-0 flex-1 overflow-y-auto" aria-label="Daftar percakapan">
             {convs.length === 0 && (
               <li className="p-6 text-sm text-slate-600">
                 {q ? `Tidak ada percakapan yang cocok dengan "${q}".` : "Belum ada percakapan. Pesan WhatsApp yang masuk akan muncul di sini."}
@@ -171,17 +173,15 @@ export default async function PesanPage({ searchParams }: { searchParams: SP }) 
               );
             })}
           </ul>
-          <section className="hidden min-h-0 md:flex md:flex-col">
-            {sp.c ? <ConversationPanel id={Number(sp.c)} isAdmin={isAdmin} /> : (
+          </div>
+          <section className={`min-h-0 flex-col ${sp.c ? "flex" : "hidden md:flex"}`}>
+            {sp.c ? <ConversationPanel id={Number(sp.c)} isAdmin={isAdmin} kembali={link({ c: undefined })} /> : (
               <div className="latar-kawung flex flex-1 items-center justify-center p-6">
                 <p className="max-w-xs rounded-md bg-white/90 px-4 py-3 text-sm text-slate-600">Pilih percakapan di sebelah kiri untuk membaca dan membalas.</p>
               </div>
             )}
           </section>
         </div>
-      )}
-      {sp.c && view === "daftar" && (
-        <div className="mt-4 md:hidden"><div className="flex h-[75vh] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white"><ConversationPanel id={Number(sp.c)} isAdmin={isAdmin} /></div></div>
       )}
     </div>
   );
@@ -215,7 +215,7 @@ async function Kanban({ convs, link }: { convs: ConvRow[]; link: (p: Record<stri
   );
 }
 
-async function ConversationPanel({ id, isAdmin }: { id: number; isAdmin: boolean }) {
+async function ConversationPanel({ id, isAdmin, kembali }: { id: number; isAdmin: boolean; kembali: string }) {
   const conv = await db.conversation.findUnique({
     where: { id },
     include: {
@@ -243,21 +243,38 @@ async function ConversationPanel({ id, isAdmin }: { id: number; isAdmin: boolean
 
   return (
     <>
-      <div className="border-b border-slate-200 p-4">
+      <div className="border-b border-slate-200 px-4 py-2.5">
         <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="flex items-center gap-2 text-base font-bold">
-              <span className="truncate">{conv.customer.name}</span>
-              {MODE_BADGE[conv.mode]}
-            </p>
-            <p className="text-sm text-slate-600">{conv.customer.phone}<span className="text-slate-400"> lewat </span>{conv.device?.label ?? "tanpa perangkat"}</p>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <Link href={kembali} className="-ml-1 rounded-md px-1.5 py-1 text-lg text-slate-600 hover:bg-slate-100 md:hidden" aria-label="Kembali ke daftar percakapan">
+              ←
+            </Link>
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 text-base font-bold">
+                <span className="truncate">{conv.customer.name}</span>
+                {MODE_BADGE[conv.mode]}
+              </p>
+              <p className="truncate text-sm text-slate-600">{conv.customer.phone}<span className="text-slate-400"> lewat </span>{conv.device?.label ?? "tanpa perangkat"}</p>
+            </div>
           </div>
-          <div className="flex items-start gap-2">
-            <ActionButton action={requestAiReply} fields={{ conversationId: id }} className="btn btn-secondary text-xs">🤖 Minta balasan AI</ActionButton>
+          <div className="flex shrink-0 items-start gap-2">
+            <ActionButton action={requestAiReply} fields={{ conversationId: id }} className="btn btn-secondary px-2.5 text-xs sm:px-4">
+              <span aria-hidden>🤖</span>
+              <span className="sr-only sm:not-sr-only">Minta balasan AI</span>
+            </ActionButton>
             <AiToggle conversationId={id} on={conv.mode === "ai"}
               changed={conv.modeChangedAt ? `Terakhir diubah ${timeAgo(conv.modeChangedAt)}` : conv.mode === "ai" ? "Aktif sejak awal" : ""} />
           </div>
         </div>
+        <details className="group mt-1.5">
+          <summary className="cursor-pointer list-none text-sm font-semibold text-slate-600 hover:text-slate-900">
+            <span className="inline-block transition-transform group-open:rotate-90">›</span> Kelola percakapan
+            <span className="ml-1 font-normal text-slate-500">
+              · {staff.find((s) => s.id === conv.assignedToId)?.name ?? "belum ditugaskan"}
+              {omsOrders.length > 0 && ` · ${omsOrders.length} pesanan OMS`}
+              {failedCheckouts.length > 0 && <span className="font-semibold text-red-700"> · {failedCheckouts.length} order gagal</span>}
+            </span>
+          </summary>
         {/* key: remount so the selects pick up a mode changed by the Agen AI switch */}
         <ActionForm key={conv.mode} action={updateConversation} className="mt-2 flex flex-wrap items-center gap-1.5 text-sm" showOk={false}>
           <input type="hidden" name="conversationId" value={id} />
@@ -313,17 +330,18 @@ async function ConversationPanel({ id, isAdmin }: { id: number; isAdmin: boolean
             createdAt: order.createdAt.toISOString(),
           }))}
         />
+        </details>
       </div>
 
-      <div className="latar-kawung flex min-h-0 flex-1 flex-col-reverse overflow-y-auto p-4">
-        <div className="space-y-2">
+      <div className="latar-kawung flex min-h-0 flex-1 flex-col-reverse overflow-y-auto px-4 py-5 md:px-8">
+        <div className="space-y-2.5">
           {conv.messages.map((m) =>
             m.sender === "system" ? (
               <p key={m.id} className="mx-auto w-fit max-w-[85%] rounded-md bg-white/85 px-3 py-1 text-center text-xs text-slate-600">{m.text}</p>
             ) : (
               <div key={m.id} className={`flex ${m.direction === "out" ? "justify-end" : ""}`}>
                 <div
-                  className={`max-w-[78%] rounded-lg px-3 py-2 text-[15px] leading-relaxed ${
+                  className={`max-w-[85%] rounded-lg px-3.5 py-2 text-[15px] leading-relaxed md:max-w-[70%] ${
                     m.direction === "in"
                       ? "rounded-tl-sm border border-slate-200 bg-white text-slate-900"
                       : m.sender === "ai"
@@ -356,10 +374,10 @@ async function ConversationPanel({ id, isAdmin }: { id: number; isAdmin: boolean
           <p className="rounded-md bg-green-100 px-3 py-2 text-sm text-green-900">Agen AI sedang membalas percakapan ini. Matikan <span className="font-semibold">Agen AI</span> di atas untuk membalas sendiri.</p>
         ) : inWindow ? (
           <div className="space-y-2">
-            <ActionForm action={sendMessage} resetOnSuccess showOk={false} className="flex gap-2">
+            <ActionForm action={sendMessage} resetOnSuccess showOk={false} className="flex items-end gap-2">
               <input type="hidden" name="conversationId" value={id} />
-              <input name="text" required placeholder="Tulis pesan..." className="input" autoComplete="off" />
-              <SubmitButton>Kirim</SubmitButton>
+              <KotakTulis />
+              <SubmitButton className="h-[52px] px-5">Kirim</SubmitButton>
             </ActionForm>
             {mediaList.length > 0 && (
               <ActionForm action={sendMediaMessage} showOk={false} className="flex flex-wrap items-center gap-2">
