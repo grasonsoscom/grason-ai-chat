@@ -3,8 +3,44 @@ import {
   clearDestinationCache,
   fetchDestinations,
   fetchDomesticCost,
+  normalizeCouriers,
   RajaOngkirError,
 } from "@/lib/rajaongkir";
+import { pickDestination, pickDestinationByText } from "@/lib/ongkir-quote";
+import { guessDestinationQuery } from "@/lib/shipping";
+
+const row = (id: number, city: string, district: string, province = "JAWA BARAT") => ({
+  id,
+  label: `${district}, ${city}, ${province}`,
+  province_name: province,
+  city_name: city,
+  district_name: district,
+  subdistrict_name: district,
+  zip_code: "",
+});
+
+describe("destination matching", () => {
+  it("never quotes a same-named place in another kab/kota", () => {
+    const rows = [row(1, "LAMPUNG TENGAH", "BANDAR SURABAYA", "LAMPUNG"), row(2, "SURABAYA", "TEGALSARI", "JAWA TIMUR")];
+    expect(pickDestinationByText(rows, "surabaya")?.id).toBe(2);
+    expect(pickDestinationByText([rows[0]], "surabaya")).toBeNull();
+  });
+
+  it("prefers the kecamatan named with the city", () => {
+    const rows = [row(1, "DEPOK", "SUKMAJAYA"), row(2, "DEPOK", "CILODONG"), row(3, "CIREBON", "CILODONG")];
+    expect(pickDestinationByText(rows, "cilodong depok")?.id).toBe(2);
+  });
+
+  it("needs more than a province match for a full address", () => {
+    expect(pickDestination([row(1, "CIANJUR", "CIBEBER")], { kecamatan: "Cibinong", kota: "Bogor", provinsi: "Jawa Barat" })).toBeNull();
+  });
+
+  it("reads kecamatan and kab/kota from a written address", () => {
+    expect(guessDestinationQuery("kirim ke Kec. Cibinong Kab. Bogor ongkirnya brp")).toBe("cibinong bogor");
+    expect(guessDestinationQuery("alamat saya jl melati 3 rt 2 kel. sukamaju kec. cilodong depok, ongkir?")).toBe("cilodong depok");
+    expect(guessDestinationQuery("berapa ongkir ke surabaya")).toBe("surabaya");
+  });
+});
 
 const calls: { url: string; init: RequestInit }[] = [];
 
@@ -93,6 +129,31 @@ describe("rajaongkir", () => {
     const error = await fetchDestinations("raja-key", "tidak-ada").catch((e: unknown) => e);
     expect(error).toBeInstanceOf(RajaOngkirError);
     expect((error as RajaOngkirError).code).toBe("404");
+  });
+
+  it("sends several couriers in one call and sorts all services cheapest first", async () => {
+    mockFetch({
+      meta: { status: "success", code: 200 },
+      data: [
+        { name: "JNE", code: "jne", service: "REG", cost: 10000, etd: "1 day" },
+        { name: "SiCepat", code: "sicepat", service: "HALU", cost: 8500, etd: "2 day" },
+        { name: "J&T", code: "jnt", service: "EZ", cost: 9000, etd: "2 day" },
+      ],
+    });
+    const rows = await fetchDomesticCost("raja-key", { origin: 1, destination: 2, weight: 1000, courier: "JNT, jne:sicepat:jne" });
+    expect(String(calls[0].init.body)).toContain("courier=jnt%3Ajne%3Asicepat");
+    expect(rows.map((r) => r.code)).toEqual(["sicepat", "jnt", "jne"]);
+  });
+
+  it("treats a cost 404 as no courier for the route", async () => {
+    mockFetch({ meta: { message: "Calculate Domestic Shipping Cost not found", code: 404, status: "error" }, data: null }, 404);
+    await expect(fetchDomesticCost("raja-key", { origin: 1, destination: 2, weight: 1000, courier: "jnt" })).resolves.toEqual([]);
+  });
+
+  it("normalizes and validates courier lists", () => {
+    expect(normalizeCouriers(" jnt , JNE;sicepat ")).toBe("jnt:jne:sicepat");
+    expect(() => normalizeCouriers("")).toThrow(/kurir/i);
+    expect(() => normalizeCouriers("jn&t")).toThrow(/kurir/i);
   });
 
   it("validates weight before calling the API", async () => {

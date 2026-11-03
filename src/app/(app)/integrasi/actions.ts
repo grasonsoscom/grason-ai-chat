@@ -34,7 +34,7 @@ export async function saveRajaOngkir(_: ActionState, fd: FormData) {
       apiKey: str(fd, "rajaOngkirApiKey") || undefined,
       originId: Number(fd.get("originId")),
       originLabel: str(fd, "originLabel"),
-      courier: str(fd, "courier"),
+      courier: fd.getAll("courier").map(String).join(":"),
       weight: Number(fd.get("weight")),
     });
     revalidatePath("/integrasi");

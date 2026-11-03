@@ -355,7 +355,12 @@ export async function createAutoOrder(input: {
     subsidi_admin_cod: plan.promo.adminSubsidy,
     total: plan.promo.total,
     segmen: plan.segment,
-    catatan: ["Dibuat otomatis oleh AI Agent.", draft.catatan].filter(Boolean).join(" "),
+    // The courier is picked as the cheapest for this address, so the warehouse must use it.
+    catatan: [
+      "Dibuat otomatis oleh AI Agent.",
+      `Kurir: ${plan.quote.courier} ${plan.quote.service} (ongkir ${formatIDR(plan.quote.cost)}).`,
+      draft.catatan,
+    ].filter(Boolean).join(" "),
   };
 
   // The same cart, recipient and address on the same day always maps to one

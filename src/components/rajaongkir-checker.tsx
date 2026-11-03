@@ -172,7 +172,7 @@ export function RajaOngkirCheck({
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700">Kurir</label>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Kurir <span className="font-normal text-slate-500">(beberapa: jnt:jne:sicepat)</span></label>
           <input
             value={courier}
             onChange={(e) => setCourier(e.target.value.toLowerCase())}

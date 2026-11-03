@@ -45,6 +45,22 @@ export class RajaOngkirError extends Error {
   }
 }
 
+/** Couriers offered in the settings form; the cheapest of the chosen ones wins. */
+export const COURIER_OPTIONS = ["jnt", "jne", "sicepat", "anteraja", "pos", "tiki", "ide", "sap", "ninja", "lion"] as const;
+export const DEFAULT_COURIERS = "jnt:jne:sicepat";
+
+/**
+ * "jnt, JNE:sicepat" -> "jnt:jne:sicepat". RajaOngkir takes several couriers in one
+ * call separated by ":" and only returns the ones that serve the route.
+ */
+export function normalizeCouriers(input: string) {
+  const codes = [...new Set(input.toLowerCase().split(/[\s,:;]+/).filter(Boolean))];
+  if (!codes.length || codes.length > 10 || codes.some((c) => !/^[a-z0-9_-]{2,20}$/.test(c))) {
+    throw new Error("Kode kurir tidak valid. Contoh: jnt, jne, sicepat.");
+  }
+  return codes.join(":");
+}
+
 function envNumber(name: string, fallback: number) {
   const value = Number(process.env[name]);
   return Number.isInteger(value) && value > 0 ? value : fallback;
@@ -58,7 +74,7 @@ function envConfig(): RajaOngkirConfig | null {
     apiKey,
     originId,
     originLabel: process.env.RAJAONGKIR_ORIGIN_LABEL?.trim() || `ID ${originId}`,
-    courier: process.env.RAJAONGKIR_COURIER?.trim() || "jne",
+    courier: process.env.RAJAONGKIR_COURIER?.trim() || DEFAULT_COURIERS,
     weight: envNumber("RAJAONGKIR_WEIGHT", 1000),
     source: "env",
   };
@@ -82,7 +98,7 @@ export async function getRajaOngkirConfig(): Promise<RajaOngkirConfig | null> {
       apiKey,
       originId: account.rajaOngkirOriginId,
       originLabel: account.rajaOngkirOriginLabel || `ID ${account.rajaOngkirOriginId}`,
-      courier: account.rajaOngkirCourier || "jne",
+      courier: account.rajaOngkirCourier || DEFAULT_COURIERS,
       weight: account.rajaOngkirWeight || 1000,
       source: "db",
     };
@@ -131,7 +147,7 @@ export async function getRajaOngkirStatus(): Promise<RajaOngkirStatus> {
     hasKey: Boolean(dbKey || process.env.RAJAONGKIR_API_KEY?.trim()),
     originId: config?.originId ?? account?.rajaOngkirOriginId ?? null,
     originLabel: config?.originLabel || account?.rajaOngkirOriginLabel || "",
-    courier: config?.courier || account?.rajaOngkirCourier || "jne",
+    courier: config?.courier || account?.rajaOngkirCourier || DEFAULT_COURIERS,
     weight: config?.weight || account?.rajaOngkirWeight || 1000,
     source: config?.source ?? (dbKey || account?.rajaOngkirOriginId ? "db" : "none"),
   };
@@ -158,10 +174,7 @@ export async function saveRajaOngkirSettings(input: {
   if (!Number.isInteger(input.originId) || input.originId <= 0) {
     throw new Error("Pilih kota/kecamatan asal pengiriman dari hasil pencarian.");
   }
-  const courier = input.courier.trim().toLowerCase();
-  if (!/^[a-z0-9_-]{2,20}$/.test(courier)) {
-    throw new Error("Kode kurir tidak valid. Contoh: jne, jnt, sicepat.");
-  }
+  const courier = normalizeCouriers(input.courier);
   if (!Number.isInteger(input.weight) || input.weight < 1 || input.weight > 100000) {
     throw new Error("Berat default harus 1–100.000 gram.");
   }
@@ -256,7 +269,10 @@ export async function fetchDestinations(
   return rows;
 }
 
-/** Low-level domestic cost. Weight is grams; courier is a RajaOngkir code such as jne/jnt/sicepat. */
+/**
+ * Low-level domestic cost. Weight is grams; courier is one RajaOngkir code or several
+ * joined by ":" (jnt:jne:sicepat). Rows come back cheapest first across all couriers.
+ */
 export async function fetchDomesticCost(
   apiKey: string,
   input: { origin: number; destination: number; weight: number; courier: string },
@@ -266,8 +282,7 @@ export async function fetchDomesticCost(
   if (!Number.isInteger(input.weight) || input.weight < 1 || input.weight > 100000) {
     throw new Error("Berat paket harus 1–100.000 gram.");
   }
-  const courier = input.courier.trim().toLowerCase();
-  if (!/^[a-z0-9_-]{2,20}$/.test(courier)) throw new Error("Kode kurir tidak valid.");
+  const courier = normalizeCouriers(input.courier);
 
   const body = new URLSearchParams({
     origin: String(input.origin),
@@ -276,11 +291,18 @@ export async function fetchDomesticCost(
     courier,
     price: "lowest",
   });
-  const data = await request<DomesticCost[] | null>("/calculate/domestic-cost", apiKey, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
+  let data: DomesticCost[] | null;
+  try {
+    data = await request<DomesticCost[] | null>("/calculate/domestic-cost", apiKey, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+  } catch (e) {
+    // The destination was already found; a 404 here means no chosen courier serves the route.
+    if (e instanceof RajaOngkirError && e.status === 404) return [];
+    throw e;
+  }
   return (data ?? [])
     .map((row) => ({
       name: row.name ?? "",

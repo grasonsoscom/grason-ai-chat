@@ -100,11 +100,20 @@ const STOP_WORDS = new Set([
   "ongkir", "ongkos", "kirim", "pengiriman", "ekspedisi", "kurir", "berapa", "brp", "ya", "kak", "min",
   "gan", "bang", "mas", "mbak", "pak", "bu", "dari", "untuk", "pakai", "jne", "jnt", "sicepat", "cod",
   "transfer", "estimasi", "hari", "sampai", "dong", "nih", "sih", "nya", "sana", "sini", "situ", "tempat",
+  "saya", "aku", "rumah", "alamat", "jl", "jalan", "rt", "rw", "no", "kel", "kelurahan", "desa",
 ]);
 
 /** Best-effort destination keyword from "ongkir ke Bandung" / "saya di Surabaya". */
 export function guessDestinationQuery(text: string) {
   const postal = text.match(/\b(\d{5})\b/);
+  // Written addresses: "kec. Cilodong Depok", "Kec Cibinong Kab. Bogor", "kecamatan X kota Y".
+  const END = String.raw`(?=\s*(?:[,.;!?\n]|\b(?:kab|kabupaten|kota|prov|provinsi|ongkir\w*|berapa|brp|kode)\b|\d|$))`;
+  const kec = text.match(new RegExp(String.raw`\bkec(?:amatan)?\b\.?\s*([a-z][a-z '-]{1,40}?)` + END, "i"));
+  if (kec) {
+    const city = text.match(new RegExp(String.raw`\b(?:kab|kabupaten|kota)\b\.?\s*([a-z][a-z '-]{1,40}?)` + END, "i"));
+    const query = [kec[1], city?.[1]].filter(Boolean).join(" ").replace(/\s+/g, " ").trim().toLowerCase();
+    if (query.length >= 3) return query;
+  }
   const patterns = [
     /\b(?:ongkir|ongkos|kirim|pengiriman|ekspedisi)\s+(?:ke|untuk|tujuan)\s+([A-Za-z][A-Za-z .'-]{2,50})/i,
     /\b(?:ke|di|tujuan|alamat|sampai)\s+([A-Za-z][A-Za-z .'-]{2,50})/i,
@@ -166,7 +175,7 @@ export async function shippingContext(
     return [
       `Data ongkir real-time dari RajaOngkir (berat paket default ${weight} gram). Angka ini boleh kamu sampaikan apa adanya; jangan mengubah atau mengarang tarif lain:`,
       `- Tujuan: ${quote.destination}`,
-      `  ${quote.courier} ${quote.service}: ${rp(quote.cost)} untuk berat ${weight} gram${quote.etd ? `, estimasi ${quote.etd}` : ""}.`,
+      `  Kurir termurah ke tujuan ini, ${quote.courier} ${quote.service}: ${rp(quote.cost)} untuk berat ${weight} gram${quote.etd ? `, estimasi ${quote.etd}` : ""}.`,
       ...cod(quote.cost),
       "Cara menyampaikan: sebutkan kurir, layanan, tarif, dan estimasi hanya jika tertera di data di atas. Jangan menawarkan kurir atau layanan lain. " +
         "Subsidi ongkir dan subsidi admin COD hanya untuk pembayaran COD; untuk Transfer, total = harga paket + ongkir. " +
@@ -180,7 +189,10 @@ export async function shippingContext(
     // No J&T workbook imported: still answer from RajaOngkir when possible.
     const query = guessDestinationQuery(customer[customer.length - 1] ?? "");
     const quote = query ? await rajaQuoteByText(query, opts.weightGrams) : null;
-    return quote ? livePrompt(quote) : null;
+    if (quote) return livePrompt(quote);
+    // Without this the AI has no shipping data at all and may guess a rate.
+    return "Pelanggan sepertinya menanyakan ongkir, tapi kecamatan/kota tujuannya belum dikenali atau belum bisa dihitung. " +
+      "Jangan menyebut atau mengarang tarif. Tanyakan kecamatan dan kab/kota tujuannya (contoh: Kec. Cilodong, Kota Depok).";
   }
 
   // The newest message naming a place wins ("kalau ke jogja?" replaces an earlier Sukajadi).

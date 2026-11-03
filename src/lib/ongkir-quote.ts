@@ -48,11 +48,14 @@ function scoreDestination(d: DomesticDestination, input: AddressForQuote) {
   return score;
 }
 
-/** Best destination among search results; falls back to the first row. */
+/**
+ * Best destination among search results, or null when none matches the address: a
+ * same-named village in another province must not be quoted (e.g. "Surabaya" in Lampung).
+ */
 export function pickDestination(rows: DomesticDestination[], input: AddressForQuote): DomesticDestination | null {
-  if (!rows.length) return null;
   let best: DomesticDestination | null = null;
-  let bestScore = 0;
+  // A province match alone (score 1) is not enough: city, kecamatan or postal code must match.
+  let bestScore = 1;
   for (const row of rows) {
     const score = scoreDestination(row, input);
     if (score > bestScore) {
@@ -60,7 +63,30 @@ export function pickDestination(rows: DomesticDestination[], input: AddressForQu
       bestScore = score;
     }
   }
-  return best ?? rows[0];
+  return best;
+}
+
+function hasWord(text: string, word: string) {
+  return Boolean(word) && ` ${text} `.includes(` ${word} `);
+}
+
+/**
+ * Free-text query ("cilodong depok", "surabaya"): the kab/kota must be named in the
+ * query; a kecamatan named too breaks ties between rows of the same city.
+ */
+export function pickDestinationByText(rows: DomesticDestination[], query: string): DomesticDestination | null {
+  const q = norm(query);
+  let best: DomesticDestination | null = null;
+  let bestScore = 0;
+  for (const row of rows) {
+    if (!hasWord(q, norm(row.city_name))) continue;
+    const score = 4 + (hasWord(q, norm(row.district_name)) ? 2 : 0) + (hasWord(q, norm(row.subdistrict_name)) ? 1 : 0);
+    if (score > bestScore) {
+      best = row;
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 async function rajaQuoteForDestination(
@@ -95,8 +121,8 @@ export async function rajaQuoteByText(query: string, weight?: number): Promise<O
   const q = query.trim();
   if (q.length < 2) return null;
   try {
-    const rows = await fetchDestinations(config.apiKey, q, { limit: 5 });
-    const destination = pickDestination(rows, { kota: q });
+    const rows = await fetchDestinations(config.apiKey, q, { limit: 20 });
+    const destination = pickDestinationByText(rows, q);
     if (!destination) return null;
     return await rajaQuoteForDestination(destination, weight ?? config.weight);
   } catch (e) {
@@ -119,7 +145,7 @@ export async function quoteOngkir(input: AddressForQuote): Promise<OngkirQuote |
   if (config) {
     for (const query of queries) {
       try {
-        const rows = await fetchDestinations(config.apiKey, query, { limit: 8 });
+        const rows = await fetchDestinations(config.apiKey, query, { limit: 20 });
         const destination = pickDestination(rows, input);
         if (!destination) continue;
         const quote = await rajaQuoteForDestination(destination, weight);

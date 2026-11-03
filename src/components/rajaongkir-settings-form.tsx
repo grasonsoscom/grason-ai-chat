@@ -23,13 +23,24 @@ type Props = {
   hasKey: boolean;
 };
 
-const COURIERS = ["jne", "jnt", "sicepat", "anteraja", "pos", "tiki", "ninja", "lion", "paxel", "idexpress", "wahana", "sap"];
+const COURIERS: { code: string; label: string }[] = [
+  { code: "jnt", label: "J&T" },
+  { code: "jne", label: "JNE" },
+  { code: "sicepat", label: "SiCepat" },
+  { code: "anteraja", label: "AnterAja" },
+  { code: "pos", label: "POS Indonesia" },
+  { code: "tiki", label: "TIKI" },
+  { code: "ide", label: "ID Express" },
+  { code: "sap", label: "SAP" },
+  { code: "ninja", label: "Ninja" },
+  { code: "lion", label: "Lion Parcel" },
+];
 
 export function RajaOngkirSettingsForm({ originId: initialOriginId, originLabel: initialOriginLabel, courier: initialCourier, weight: initialWeight, hasKey }: Props) {
   const [apiKey, setApiKey] = useState("");
   const [originId, setOriginId] = useState<number | null>(initialOriginId);
   const [originLabel, setOriginLabel] = useState(initialOriginLabel);
-  const [courier, setCourier] = useState(initialCourier);
+  const [couriers, setCouriers] = useState<string[]>(initialCourier.split(":").filter(Boolean));
   const [weight, setWeight] = useState(initialWeight);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Destination[]>([]);
@@ -125,20 +136,29 @@ export function RajaOngkirSettingsForm({ originId: initialOriginId, originLabel:
         )}
       </div>
 
-      <Field label="Kurir default" hint="Kode kurir RajaOngkir, misalnya jne, jnt, atau sicepat.">
-        <input
-          name="courier"
-          value={courier}
-          onChange={(e) => setCourier(e.target.value.toLowerCase())}
-          className="input"
-          list="rajaongkir-couriers"
-          pattern="[a-z0-9_-]{2,20}"
-          required
-        />
-        <datalist id="rajaongkir-couriers">
-          {COURIERS.map((c) => <option key={c} value={c} />)}
-        </datalist>
-      </Field>
+      <fieldset className="mb-4">
+        <legend className="mb-1 text-sm font-medium text-slate-700">Kurir yang dipakai gudang</legend>
+        <p className="mb-2 text-xs text-slate-500">
+          Ongkir dihitung untuk semua kurir yang dicentang, lalu sistem otomatis memilih yang termurah ke alamat pelanggan.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {COURIERS.map((c) => (
+            <label key={c.code} className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-1.5 text-sm">
+              <input
+                type="checkbox"
+                name="courier"
+                value={c.code}
+                checked={couriers.includes(c.code)}
+                onChange={(e) =>
+                  setCouriers((prev) => (e.target.checked ? [...prev, c.code] : prev.filter((x) => x !== c.code)))
+                }
+              />
+              {c.label}
+            </label>
+          ))}
+        </div>
+        {couriers.length === 0 && <p role="alert" className="mt-2 text-xs text-red-600">Centang minimal satu kurir.</p>}
+      </fieldset>
 
       <Field label="Berat default paket (gram)" hint="Dipakai kalau berat paket tidak diisi saat cek ongkir. 1 kg = 1000 gram.">
         <input

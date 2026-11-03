@@ -115,7 +115,7 @@ export default async function IntegrasiPage() {
             } />
           <IntegrationCard icon="🛵" name="Cek Ongkir RajaOngkir"
             description={raja.configured
-              ? `${raja.courier.toUpperCase()} · asal ${raja.originLabel} · berat default ${raja.weight.toLocaleString("id-ID")} g. Cek tarif real-time ke seluruh Indonesia.`
+              ? `termurah dari ${raja.courier.split(":").join(", ").toUpperCase()} · asal ${raja.originLabel} · berat default ${raja.weight.toLocaleString("id-ID")} g. Cek tarif real-time ke seluruh Indonesia.`
               : "Cek ongkir real-time berbagai kurir berdasarkan kota asal, daerah tujuan, dan berat paket."}
             status={raja.configured ? <Badge tone="green">Aktif</Badge> : <Badge>Belum dikonfigurasi</Badge>}
             action={
@@ -123,7 +123,7 @@ export default async function IntegrasiPage() {
                 <div className="mb-4 space-y-1 text-sm text-slate-600">
                   <p>Status: {raja.configured ? `aktif (${raja.source === "db" ? "pengaturan web" : ".env"})` : "belum aktif"}</p>
                   <p>Kota asal: <span className="font-medium">{raja.originLabel || "belum dipilih"}</span></p>
-                  <p>Kurir default: <code className="rounded bg-slate-100 px-1">{raja.courier}</code></p>
+                  <p>Kurir (dipilih yang termurah): <code className="rounded bg-slate-100 px-1">{raja.courier}</code></p>
                   <p>Berat default: {raja.weight.toLocaleString("id-ID")} gram</p>
                   <p>API key: {raja.hasKey ? "tersimpan" : "belum ada"}</p>
                 </div>
