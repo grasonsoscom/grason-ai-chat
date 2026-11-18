@@ -8,5 +8,8 @@ export async function register() {
     // Sends delayed AI replies (agents with a reply delay) once they are due.
     const { startAiReplySweeper } = await import("./lib/ai-delay");
     startAiReplySweeper();
+    // Sends yesterday's lead summary to WhatsApp each morning (Laporan settings).
+    const { startLeadReportScheduler } = await import("./lib/lead-report-data");
+    startLeadReportScheduler();
   }
 }

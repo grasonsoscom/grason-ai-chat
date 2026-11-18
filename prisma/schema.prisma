@@ -30,6 +30,11 @@ model Account {
   rajaOngkirOriginLabel String @default("")
   rajaOngkirCourier     String @default("jne")
   rajaOngkirWeight      Int    @default(1000) // default package weight in grams
+  // Daily lead report sent to WhatsApp every morning (see lib/lead-report.ts).
+  leadReportEnabled  Boolean @default(false)
+  leadReportPhones   String  @default("") // comma-separated 62... numbers
+  leadReportHour     Int     @default(7) // hour in Asia/Jakarta
+  leadReportLastDate String  @default("") // YYYY-MM-DD (WIB) of the last day reported
   updatedAt       DateTime @updatedAt
 }
 
