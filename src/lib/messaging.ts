@@ -5,6 +5,7 @@ import { assertCoins, spendCoins, COIN_COSTS } from "./coins";
 import { sendTemplateVia, sendTextVia } from "./channel";
 import { insideServiceWindow } from "./whatsapp";
 import { emitWebhook } from "./webhook";
+import { foreignLinks } from "./links";
 import { omsFirstResponse, omsFollowUp, omsHandover, startOmsLead } from "./oms-sync";
 
 async function findAgentForDevice(deviceId: number | null) {
@@ -56,6 +57,18 @@ export async function recordInbound(input: { phone: string; name?: string; text:
   await emitWebhook("message.received", { conversationId: conv.id, customerId: customer.id, text: input.text });
   // OMS lead per new conversation (one lead per customer); never throws.
   if (isNew) await startOmsLead(conv.id);
+
+  // A new lead who writes a link other than the official Shopee page is answered by staff
+  // instead of the AI: the Agen AI switch is turned off before the AI can reply.
+  if (isNew && conv.mode === "ai") {
+    const blocked = foreignLinks(input.text);
+    if (blocked.length) {
+      await db.conversation.update({ where: { id: conv.id }, data: { mode: "staf", modeChangedAt: now } });
+      const shown = blocked[0].length > 60 ? `${blocked[0].slice(0, 60)}…` : blocked[0];
+      await addSystemNote(conv.id, `Agen AI dimatikan otomatis: pesan pertama berisi link di luar vivagoat.com/shopee (${shown}). Staf membalas manual.`);
+      return { conversationId: conv.id, ai: "skipped_link" as const };
+    }
+  }
 
   if (conv.mode !== "ai") return { conversationId: conv.id, ai: "skipped" as const };
   return { conversationId: conv.id, ai: await aiRespond(conv.id) };

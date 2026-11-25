@@ -50,6 +50,12 @@ Open http://localhost:3000 and sign in with email + password (test logins in `pr
 - 429 waits and retries once when `Retry-After` is 10 s or less; otherwise the error says when to retry. OMS error codes (`total_tidak_cocok`, `stok_tidak_cukup`, …) become Indonesian messages.
 - `npm test` runs the unit tests (`node:test` via tsx), including the HMAC test vector from the OMS guide.
 
+### Link dari lead baru (Agen AI otomatis mati)
+
+- A brand-new conversation whose first message contains a link other than `https://vivagoat.com/shopee` is not answered by the AI: `recordInbound` turns the **Agen AI** switch off (mode `staf`), adds a system note, and returns without calling the agent. `https://vivagoat.com/` (the site root) is allowed as well.
+- Detection is in `src/lib/links.ts` (`foreignLinks`), unit-tested in `links.test.ts`. Explicit URLs always count; bare domains count only with a known TLD, so a price (`42.000`) or a typo (`bagus.banget`) is not treated as a link.
+- Only the first message of a new conversation is checked. The OMS lead is still created, the conversation shows under the **Staf** tab, and staff can reply right away — or turn the switch back on.
+
 ### Ongkir J&T (Excel)
 
 - Import the J&T rate workbook in **Integrasi → Ekspedisi → Ongkir J&T**, or `npm run ongkir:import -- "path/to/file.xlsx"`. Importing replaces all stored rates.
@@ -85,7 +91,7 @@ Local dev stays on SQLite; Vercel uses PostgreSQL. `npm run vercel-build` (set i
 ## Structure
 
 - `prisma/schema.prisma`: data model (account and coins, staff/roles/groups, devices/templates, customers/conversations/messages, products, funnels/labels, audiences, broadcasts, AI agents, calendar).
-- `src/lib/`: domain logic (`messaging.ts` inbound/AI/24h window/follow-up, `ai.ts` Claude prompt, `coins.ts`, `funnel.ts` renumbering, `whatsapp.ts`, `webhook.ts`, `uploads.ts`).
+- `src/lib/`: domain logic (`messaging.ts` inbound/AI/24h window/follow-up, `ai.ts` Claude prompt, `links.ts` foreign-link detection, `coins.ts`, `funnel.ts` renumbering, `whatsapp.ts`, `webhook.ts`, `uploads.ts`).
 - `src/app/(app)/<module>/`: one page + `actions.ts` per module.
 - `src/app/api/`: incoming webhook, follow-up cron, uploaded images, sample CSV.
 
